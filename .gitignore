@@ -1,0 +1,6 @@
+.vscode/**
+.dist/**
+__pycache__/**
+harley/**
+harley_google_or_tools_research.py
+*.ts
