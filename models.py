@@ -15,9 +15,11 @@ class ActivityConditionOption(Enum):
     BEFORE = 0
     AFTER = 1
     RIGHT_AFTER = 2
-    BETWEEN = 3
-    WITHIN = 4
-    IN_FIXED_ORDER_AS = 5
+    RIGHT_BEFORE = 3
+    BETWEEN = 4
+    WITHIN_AFTER = 5
+    WITHIN_BEFORE = 6
+    IN_FIXED_ORDER_AS = 7
 
 class ActivityConditionOptionType(Enum):
     ACTIVITY = 0
@@ -38,7 +40,6 @@ class Condition:
     scope: ConditionScope
     option: ActivityConditionOption | RoomConditionOption
     option_type: ActivityConditionOptionType | None
-    mandatory: bool
     args: dict
 
 @dataclass
