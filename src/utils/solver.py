@@ -87,6 +87,7 @@ class Solver:
         
         makespan = self.__model.NewIntVar(0, self.__horizon, 'makespan')
         self.__model.AddMaxEquality(makespan, self.__last_activity_end_time_int_vars)
+        self.__model.Minimize(makespan)
     
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
@@ -626,11 +627,14 @@ class Solver:
             other_activity_id (int): the id of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        # if generate:
-        #     assert len(set([len(assessment.activities) for assessment in self.__assessments])) == 1, 'Inequal number of activities per assessment'
-        #     for client_id, _ in enumerate(self.__schedules):
-        #         for literal, other_literal in zip(self.__client_activity_rooms[(client_id, activity_id, room_id)], self.__client_activity_rooms[(client_id, other_activity_id, room_id)]):
-        #             self.__model.Add(literal == other_literal)
+        if generate:
+            assert len(set([len(assessment.activities) for assessment in self.__assessments])) == 1, 'Inequal number of activities per assessment'
+            for client_id, _ in enumerate(self.__schedules):
+                literals = self.__client_activity_rooms[(client_id, activity_id, room_id)]
+                other_literals = self.__client_activity_rooms[(client_id, other_activity_id, room_id)]
+                
+                self.__model.Add(sum([*literals, *other_literals]) != 1)
+                self.__model.Add(sum([*literals, *other_literals]) <= 2 )
         
     @property
     def assessments(self) -> List[Assessment]:
