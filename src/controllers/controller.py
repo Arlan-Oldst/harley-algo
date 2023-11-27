@@ -6,7 +6,7 @@ Functions:
  - Calls the scheduler
  - Returns output
 """
-from src.utils.serializer import serialize_as_dataclass, serialize_scenario_action_as_solver_args, serialize_assessments
+from src.utils.serializer import serialize_as_dataclass, serialize_scenario_action_as_solver_args, serialize_assessments, serialize_rooms
 from src.models.model import ScenarioAction
 from src.utils.solver import Solver
 import json
@@ -24,10 +24,12 @@ class Controller:
         
         # TODO: set assessments attribute of Solver
         assessments = kwargs.get('assessments')
-        solver.assessments = serialize_assessments(scenario_action.data, assessments)
+        r = serialize_rooms(kwargs.get('rooms'))
+        solver.assessments = serialize_assessments(scenario_action.data, r, assessments)
         
         # TODO: generate scenario
         generated_scenario = solver.generate()
+        print(generated_scenario)
         
         # TODO: instantiate GeneratedScenario
         

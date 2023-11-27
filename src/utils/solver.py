@@ -1,7 +1,7 @@
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model import IntVar
 from typing import List, Dict, Tuple, Any
-from src.models.solver_model import Room, ActivityRoom, ActivityConditionOption, ActivityConditionOptionType, ConditionScope, Condition, Assessment, Activity, RoomConditionOption, RoomConditionOptionType
+from src.models.solver_model import Room, ActivityRoom, ActivityConditionOption, ActivityConditionOptionType, ConditionScope, Condition, Assessment, Activity, RoomConditionOption, RoomConditionOptionType, RoomType
 from datetime import timedelta
 import collections
 
@@ -46,6 +46,7 @@ class Solver:
         self.__time_interval_vars_per_room = collections.defaultdict(list)
         self.__time_interval_vars_per_client = collections.defaultdict(list)
         self.__activity_bool_vars = collections.defaultdict(list)
+        self.__client_activity_rooms = collections.defaultdict(list)
         self.__last_activity_end_time_int_vars = []
         
         self.__activity_index_floor_bool_vars = dict()
@@ -53,8 +54,8 @@ class Solver:
         self.__activity_index_start_time_int_vars = dict()
         self.__activity_index_end_time_int_vars = dict()
         self.__activity_index_room_bool_vars = dict()
-        self.__activity_index_activity_room_bool_vars = dict()
         
+        self.__activity_room_bool_vars = collections.defaultdict(list)
         self.__activity_floor_bool_vars = collections.defaultdict(list)
         self.__activity_time_interval_vars = collections.defaultdict(list)
         self.__activity_start_time_int_vars = collections.defaultdict(list)
@@ -143,7 +144,7 @@ class Solver:
                   
                 if len(activities) > 1:
                     current_activities = []
-                    for activity in activities:
+                    for sub_activity_index, activity in enumerate(activities):
                         other_suffix = f'_c{client_id}_a{activity_index}_r{activity.room_id}'
                         current_start = self.__model.NewIntVar(0, self.__horizon, f'start{other_suffix}')
                         current_duration = activity.duration
@@ -170,6 +171,8 @@ class Solver:
                         self.__activity_end_time_int_vars[(client_id, activity.id)].append(current_end)
                         self.__activity_time_interval_vars[(client_id, activity.id)].append(current_interval)
                         self.__activity_floor_bool_vars[(client_id, activity.id)].append(current_floor)
+                        self.__activity_room_bool_vars[(activity.room_id, activity_index, activity.id)].append(current_activity)
+                        self.__client_activity_rooms[(client_id, activity.id, activity.room_id)].append(current_activity)
                         
                     self.__model.AddExactlyOne(current_activities)
                 else:
@@ -179,11 +182,13 @@ class Solver:
                     self.__activity_end_time_int_vars[(client_id, activities[0].id)].append(end)
                     self.__activity_time_interval_vars[(client_id, activities[0].id)].append(interval)
                     self.__activity_floor_bool_vars[(client_id, activities[0].id)].append(floor)
+                    self.__activity_room_bool_vars[(activities[0].room_id, 0, activities[0].id)].append(self.__model.NewConstant(1))
                     
                     self.__time_interval_vars_per_room[activities[0].room_id].append(interval)
                     self.__time_interval_vars_per_client[client_id].append(interval)
                     
                     self.__activity_index_room_bool_vars[(client_id, activities[0].id, activity_index, activities[0].room_id)] = self.__model.NewConstant(1)
+                    self.__client_activity_rooms[(client_id, activities[0].id, activities[0].room_id)].append(self.__model.NewConstant(1))
                     self.__activity_bool_vars[(client_id,  activities[0].id)].append(self.__model.NewConstant(1))                    
                 
             self.__last_activity_end_time_int_vars.append(previous_end)
@@ -286,55 +291,58 @@ class Solver:
         """
         for client_id, _ in enumerate(self.__schedules):
             for condition in self.__conditions_per_assessment[self.__get_assessment_by_client_id(client_id).id]:
-                if condition.option == ActivityConditionOption.BEFORE:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                if condition.scope != ConditionScope.ACTIVITY.value:
+                    raise ValueError('Invalid condition scope for activity constraint')
+                
+                if condition.option == ActivityConditionOption.BEFORE.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_before_activity_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.TIME:
+                    elif condition.option_type == ActivityConditionOptionType.TIME.value:
                         self.__apply_before_time_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.ORDER:
+                    elif condition.option_type == ActivityConditionOptionType.ORDER.value:
                         self.__apply_before_order_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for before activity constraint')
-                elif condition.option == ActivityConditionOption.AFTER:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.AFTER.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_after_activity_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.TIME:
+                    elif condition.option_type == ActivityConditionOptionType.TIME.value:
                         self.__apply_after_time_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.ORDER:
+                    elif condition.option_type == ActivityConditionOptionType.ORDER.value:
                         self.__apply_after_order_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for after activity constraint')
-                elif condition.option == ActivityConditionOption.RIGHT_AFTER:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.RIGHT_AFTER.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_right_after_activity_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for right after activity constraint')
-                elif condition.option == ActivityConditionOption.RIGHT_BEFORE:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.RIGHT_BEFORE.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_right_before_activity_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for right before activity constraint')
-                elif condition.option == ActivityConditionOption.BETWEEN:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.BETWEEN.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_between_activities_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.TIME:
+                    elif condition.option_type == ActivityConditionOptionType.TIME.value:
                         self.__apply_between_times_constraint(client_id, **condition.args)
-                    elif condition.option_type == ActivityConditionOptionType.ORDER:
+                    elif condition.option_type == ActivityConditionOptionType.ORDER.value:
                         self.__apply_between_orders_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for between constraint')
-                if condition.option == ActivityConditionOption.WITHIN_AFTER:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.WITHIN_AFTER.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_within_after_activity_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for within after activity constraint')
-                elif condition.option == ActivityConditionOption.WITHIN_BEFORE:
-                    if condition.option_type == ActivityConditionOptionType.ACTIVITY:
+                elif condition.option == ActivityConditionOption.WITHIN_BEFORE.value:
+                    if condition.option_type == ActivityConditionOptionType.ACTIVITY.value:
                         self.__apply_within_before_activity_constraint(client_id, **condition.args)
                     else:
                         raise ValueError('Invalid condition option type for within before activity constraint')
-                elif condition.option == ActivityConditionOption.IN_FIXED_ORDER_AS:
-                    if condition.option_type == ActivityConditionOptionType.ORDER:
+                elif condition.option == ActivityConditionOption.IN_FIXED_ORDER_AS.value:
+                    if condition.option_type == ActivityConditionOptionType.ORDER.value:
                         self.__apply_order_constraint(client_id,**condition.args)
                     else:
                         raise ValueError('Invalid condition option type for in fixed order as constraint')
@@ -554,10 +562,32 @@ class Solver:
                 self.__model.Add(literal == 0)
     
     def __apply_room_constraints(self):
-        pass
+        for room_id, conditions in self.__conditions_per_room.items():
+            condition: Condition
+            for condition in conditions:
+                if condition.scope != ConditionScope.ROOM.value:
+                    raise ValueError('Invalid condition scope for room constraint')
+                
+                if condition.option == RoomConditionOption.MAXIMUM.value:
+                    if condition.option_type == RoomConditionOptionType.CLIENT.value:
+                        self.__apply_maximum_capacity_constraint(**condition.args)
+                    else:
+                        raise ValueError('Invalid condition option type for maximum room constraint')
+                elif condition.option == RoomConditionOption.UNIQUE.value:
+                    if condition.option_type == RoomConditionOptionType.ACTIVITY.value:
+                        self.__apply_unique_room_for_activity_constraint(**condition.args)
+                    else:
+                        raise ValueError('Invalid condition option type for unique room constraint')
+                elif condition.option == RoomConditionOption.SAME.value:
+                    if condition.option_type == RoomConditionOptionType.ACTIVITY.value:
+                        self.__apply_same_room_for_activities_constraint(**condition.args)
+                    else:
+                        raise ValueError('Invalid condition option type for same room constraint')
+                else:
+                    raise ValueError('Invalid condition option')                    
     
     # Room Conditions
-    def __apply_maximum_capacity_constraint(self, room_id: int, capacity: int, generate: bool):
+    def __apply_maximum_capacity_constraint(self, room_id: int, activity_id, capacity: int, generate: bool):
         """[Room Condition] Applies the condition that a room must have a maximum capacity; sum of clients in room <= capacity.
 
         Args:
@@ -565,18 +595,28 @@ class Solver:
             capacity (int): the maximum capacity of the room
             generate (bool): whether to generate or avoid generating the constraint
         """
-        pass
+        if generate:
+            assert len(set([len(assessment.activities) for assessment in self.__assessments])) == 1, 'Inequal number of activities per assessment'
+            for _, schedule in enumerate(self.__schedules):
+                for activity_index, _ in enumerate(schedule):
+                    self.__model.Add(sum(self.__activity_room_bool_vars[(room_id, activity_index, activity_id)]) <= capacity)
+                break
     
-    def __apply_unique_room_for_activity_constraint(self, activity_id: int, generate: bool):
+    def __apply_unique_room_for_activity_constraint(self, room_id: int, activity_id: int, generate: bool):
         """[Room Condition] Applies the condition that an activity must be in a unique room; sum of activities in room <= 1.
 
         Args:
             activity_id (int): the id of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        pass
+        if generate:
+            assert len(set([len(assessment.activities) for assessment in self.__assessments])) == 1, 'Inequal number of activities per assessment'
+            for _, schedule in enumerate(self.__schedules):
+                for activity_index, _ in enumerate(schedule):
+                    self.__model.AddAtMostOne(self.__activity_room_bool_vars[(room_id, activity_index, activity_id)])
+                break
     
-    def __apply_same_room_for_activities_constraint(self, client_id: int, room_id: int, activity_id: int, other_activity_id: int, generate: bool):
+    def __apply_same_room_for_activities_constraint(self, room_id: int, activity_id: int, other_activity_id: int, generate: bool):
         """[Room Condition] Applies the condition that the two activities of client must be in the same room; room id of activity == room id of other activity.
 
         Args:
@@ -586,8 +626,12 @@ class Solver:
             other_activity_id (int): the id of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        pass
-
+        # if generate:
+        #     assert len(set([len(assessment.activities) for assessment in self.__assessments])) == 1, 'Inequal number of activities per assessment'
+        #     for client_id, _ in enumerate(self.__schedules):
+        #         for literal, other_literal in zip(self.__client_activity_rooms[(client_id, activity_id, room_id)], self.__client_activity_rooms[(client_id, other_activity_id, room_id)]):
+        #             self.__model.Add(literal == other_literal)
+        
     @property
     def assessments(self) -> List[Assessment]:
         """Getter attribute for the assessments
@@ -598,20 +642,8 @@ class Solver:
     def assessments(self, _assessments: List[Assessment]) -> None:
         """Setter attribute for the assessments
         """
-        self.__assessments = _assessments
-    
-    def __validate_assessment(self, _assessment: Assessment) -> bool:
-        """Helper function for validating the assessments
-        """
-        if not getattr(_assessment, 'id', False):
-            return False
-        if not getattr(_assessment, 'name', False):
-            return False
-        if not getattr(_assessment, 'activities', False):
-            return False
-        if not getattr(_assessment, 'quantity', False):
-            return False
-        return True
+        # TODO: Modify sort to be based on priority
+        self.__assessments = sorted(_assessments, key=lambda a: a.name)
     
     def generate(self):
         assert self.__assessments is not None, 'Invalid assessments'
@@ -620,6 +652,7 @@ class Solver:
         self.__define_variables()
         self.__apply_general_constraints()
         self.__apply_activity_constraints()
+        self.__apply_room_constraints()
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
@@ -629,6 +662,8 @@ class Solver:
             return self.__solver.StatusName(self.__status)
         
         for client_id, schedule in enumerate(self.__schedules):
+            for literal, other_literal in zip(self.__client_activity_rooms[(client_id, 'Check-in, Consent & Change', 'St James')], self.__client_activity_rooms[(client_id, 'Lunch', 'St James')]):
+                print(self.__solver.Value(literal), self.__solver.Value(other_literal))
             print(f'Client {client_id}')
             a = []
             for activity_index, activities in enumerate(schedule):
@@ -640,6 +675,7 @@ class Solver:
                         e_a = self.__solver.Value(self.__activity_index_end_time_int_vars[(client_id, activity_index)])
                         a.append((
                             activity.id,
+                            activity.room_id,
                             s_a,
                             e_a,
                         ))
@@ -653,13 +689,13 @@ class Solver:
                 s_oa = self.__solver.Value(self.__activity_index_start_time_int_vars[(client_id, activity_index + 1)])
                 if self.__solver.Value(self.__room_floor_bool_vars[(client_id, activity_index, activity_index + 1)]):
                     a.append((
-                        't',
+                        'Transfer',
                         s_gt,
                         e_gt,
                     ))
                 elif e_a != s_oa:
                     a.append((
-                        'g',
+                        'Gap',
                         e_a,
                         s_oa,
                     ))
@@ -706,6 +742,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Client Room {i}',
+            type=RoomType.CLIENT,
             floor=1,
             conditions=[
                 Condition(
@@ -738,7 +775,8 @@ if __name__ == '__main__':
     PHLEBOTOMY_ROOMS = [
         Room(
             id=i,
-            name=f'Client Room {i}',
+            name=f'Phelobotomy Room {i}',
+            type=RoomType.OTHER,
             floor=1,
             conditions=[]
         ) for i in range(BASE_ROOM_ID + SUM_6 + 1, BASE_ROOM_ID + SUM_7 + 1)
@@ -747,6 +785,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Consultation Room {i}',
+            type=RoomType.OTHER,
             floor=2,
             conditions=[
                 Condition(
@@ -768,6 +807,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Cardiac Room {i}',
+            type=RoomType.OTHER,
             floor=1,
             conditions=[]
         ) for i in range(BASE_ROOM_ID + SUM_3 + 1, BASE_ROOM_ID + SUM_4 + 1)
@@ -776,6 +816,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'MRI Room {n}',
+            type=RoomType.OTHER,
             floor=2,
             conditions=[]
         ) for i, n in zip(range(BASE_ROOM_ID + SUM_1 + 1, BASE_ROOM_ID + SUM_2 + 1), [*(['1.5T'] * NUM_MRI_15_ROOMS), *(['3T'] * NUM_MRI_3_ROOMS)])
@@ -784,6 +825,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Ultrasound Room {i}',
+            type=RoomType.OTHER,
             floor=2,
             conditions=[]
         ) for i in range(BASE_ROOM_ID + NUM_CLIENT_ROOMS + 1, BASE_ROOM_ID + SUM_1 + 1)
@@ -792,6 +834,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Eyes and Ears Room {i}',
+            type=RoomType.OTHER,
             floor=1,
             conditions=[]
         ) for i in range(BASE_ROOM_ID + SUM_5 + 1, BASE_ROOM_ID + SUM_6 + 1)
@@ -800,6 +843,7 @@ if __name__ == '__main__':
         Room(
             id=i,
             name=f'Radiology Room {i}',
+            type=RoomType.OTHER,
             floor=2,
             conditions=[]
         ) for i in range(BASE_ROOM_ID + SUM_7 + 1, BASE_ROOM_ID + SUM_8 + 1)

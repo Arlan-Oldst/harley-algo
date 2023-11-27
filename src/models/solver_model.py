@@ -35,6 +35,10 @@ class RoomConditionOptionType(Enum):
     ACTIVITY = 'ACTIVITY'
     CLIENT = 'CLIENT'
 
+class RoomType(Enum):
+    CLIENT = 'CLIENT'
+    OTHER = 'OTHER'
+
 @dataclass
 class Condition:
     scope: ConditionScope
@@ -44,8 +48,9 @@ class Condition:
 
 @dataclass
 class Room:
-    id: int
+    id: str
     name: str
+    type: RoomType
     floor: int
     conditions: List[Condition]
     
@@ -56,21 +61,21 @@ class ActivityRoom:
 
 @dataclass
 class Activity:
-    id: int
+    id: str
     name: str
     conditions: List[Condition]
     rooms: List[ActivityRoom]
 
 @dataclass
 class Assessment:
-    id: int
+    id: str
     name: str
     activities: List[Activity]
     quantity: int
 
 @dataclass
 class Client:
-    id: int
+    id: str
     assessment: Assessment
 
 ENUMS = set((

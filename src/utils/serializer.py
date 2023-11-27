@@ -4,7 +4,7 @@ Assumptions:
  - All data is valid JSON
 """
 import types
-from typing import List, get_origin
+from typing import List, get_origin, Dict, Any, Tuple
 from src.models import model as m
 from src.models import solver_model as sm
 from dataclasses import fields as fs
@@ -75,32 +75,95 @@ def serialize_scenario_action_as_solver_args(scenario_action: m.ScenarioAction) 
     
     return solver_args
 
-def serialize_condition(condition: m.Condition) -> sm.Condition:
-    pass
-
-def serialize_room(room: m.Resource) -> sm.Room:
-    pass
-
-def serialize_activity_room() -> sm.ActivityRoom:
-    pass
-
-def serialize_activity(activity: m.Activity) -> sm.Activity:
-    pass
-
-def serialize_assessment(**kwargs) -> sm.Assessment:
-    # TODO: Modify to support m.Assessment instead
-    return sm.Assessment(
-        id=kwargs.get('id'),
-        name=kwargs.get('name'),
-        activities=kwargs.get('activities'),
+def serialize_condition(**kwargs) -> sm.Condition:
+    args = {
+        arg: value if 'time' not in arg else datetime.strptime(value,"%H:%M:%S")
+        for arg, value in kwargs.get('args').items()
+    }
+    kwargs = {
+        **kwargs,
+        'args': {
+            arg: value if 'time' not in arg else timedelta(hours=value.hour, minutes=value.minute, seconds=value.second)
+            for arg, value in args.items()
+        }
+    }
+    return sm.Condition(
+        **format_fields(kwargs),
     )
 
-def serialize_assessments(scenario_action_data: m.ScenarioActionData, assessments: List[dict]) -> List[sm.Assessment]:
+def serialize_conditions(conditions: List[dict]) -> List[sm.Condition]:
+    return [
+        serialize_condition(**condition)
+        for condition in conditions
+    ]
+
+def serialize_room(**kwargs) -> sm.Room:
+    # TODO: Modify to support m.Resource instead
+    kwargs = {
+        **kwargs,
+        'conditions': serialize_conditions(kwargs.get('conditions'))
+    }
+    return sm.Room(
+        **format_fields(kwargs),
+    )
+
+def serialize_rooms(rooms: List[dict]) -> List[sm.Room]:
+    # TODO: Modify to support m.Resource instead
+    return [
+        serialize_room(**room)
+        for room in rooms
+    ]
+
+def serialize_activity_room(r: List[sm.Room], room_id: str, duration: int) -> sm.ActivityRoom:
+    # TODO: Modify to support m.Resource instead
+    return sm.ActivityRoom(
+        room=find_room(room_id, r),
+        duration=duration
+    )
+
+def serialize_activity_rooms(r: List[sm.Room], activity_rooms: Dict[str, int]) -> List[sm.ActivityRoom]:
+    # TODO: Modify to support m.Resource instead
+    return [
+        serialize_activity_room(r, room_id, duration)
+        for room_id, duration in activity_rooms.items()
+    ]
+
+def serialize_activity(r: List[sm.Room], **kwargs) -> sm.Activity:
+    # TODO: Modify to support m.Activity instead
+    kwargs = {
+        **kwargs,
+        'conditions': serialize_conditions(kwargs.get('conditions')),
+        'rooms': serialize_activity_rooms(r, kwargs.get('rooms'))
+    }
+    return sm.Activity(
+        **format_fields(kwargs)
+    )
+
+def serialize_activities(r: List[sm.Room], activities: List[dict]) -> List[sm.Activity]:
+    # TODO: Modify to support m.Activity instead
+    return [
+        serialize_activity(r, **activity)
+        for activity in activities
+    ]
+
+def serialize_assessment(r: List[sm.Room], **kwargs) -> sm.Assessment:
+    # TODO: Modify to support m.Assessment instead
+    kwargs = {
+        **kwargs,
+        'activities': serialize_activities(r, kwargs.get('activities')),
+    }
+    return sm.Assessment(
+        **format_fields(kwargs),
+    )
+
+def serialize_assessments(scenario_action_data: m.ScenarioActionData, r: List[sm.Room], assessments: List[dict]) -> List[sm.Assessment]:
     # TODO: Modify to support m.Assessment instead
     num_elites = sum((scenario_action_data.client_elite.single_female, scenario_action_data.client_elite.single_male))
     num_ultimates = sum((scenario_action_data.client_ultimate.single_female, scenario_action_data.client_ultimate.single_male))
     return [
-        serialize_as_dataclass(sm.Assessment, **{**assessment, 'quantity': num_elites if assessment.get('name') == 'Elite' else num_ultimates})
+        serialize_assessment(r, **{**assessment, 'quantity': num_elites})
+        if 'elite' in str(assessment.get('name')).lower()
+        else serialize_assessment(r, **{**assessment, 'quantity': num_ultimates})
         for assessment in assessments
     ]
 
@@ -117,3 +180,12 @@ def serialize_clients(scenario_action_data: m.ScenarioActionData) -> sm.Client:
     
 def format_field(key: str) -> str:
     return re.sub(r'[A-Z]', repl=lambda match: f'_{str(match.group(0)).lower()}', string=key)
+
+def format_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        format_field(field): value
+        for field, value in fields.items()
+    }
+
+def find_room(room_id: str, rooms: List[sm.Room]) -> sm.Room:
+    return next(filter(lambda room: room.id == room_id, rooms), None)
