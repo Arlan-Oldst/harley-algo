@@ -1,22 +1,18 @@
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model import IntVar
 from typing import List, Dict, Tuple, Any
-from models import Client, Condition, Activity, ActivityRoom, Assessment, ConditionScope, ActivityConditionOption, ActivityConditionOptionType, RoomConditionOption, RoomConditionOptionType, Room
+from src.models.solver_model import Room, ActivityRoom, ActivityConditionOption, ActivityConditionOptionType, ConditionScope, Condition, Assessment, Activity, RoomConditionOption, RoomConditionOptionType
 from datetime import timedelta
 import collections
 
-"""
-Rules:
-- General Conditions are hard-coded.
-- A client must have an id, type, and list of activities
-- An activity must have an id, duration, list of rooms, and list of conditions
-- A room must have an id, floor, and list of conditions
-
-- A condition is assumed as a singleton
-"""
-
 class Solver:
-    def __init__(self, time_start: timedelta, time_end: timedelta, time_max_interval: timedelta, time_max_gap: timedelta, time_transfer: timedelta, num_floors: int, simultaneous_transfers: bool) -> None:
+    """A class for solving the scheduling problem of the assessments.
+    
+    Assumptions:
+    - The data received is already structured and validated
+    """
+        
+    def __init__(self, time_start: timedelta, time_end: timedelta, time_max_interval: timedelta, time_max_gap: timedelta, time_transfer: timedelta, num_floors: int, num_doctors: int, simultaneous_transfers: bool) -> None:
         """Initializer for the solver
 
         Args:
@@ -24,7 +20,7 @@ class Solver:
             time_end (timedelta): the end time of the schedule
             time_max_gap (timedelta): the maximum gap between activities
             time_transfer (timedelta): the time needed for transferring between activities
-            assessment_names (List[str]): the names of the assessments
+            num_floors (int): the names of the assessments
         """
         self.__time_start = time_start
         self.__time_end = time_end
@@ -102,6 +98,8 @@ class Solver:
                     activities.append(
                         self.__activity_type(activity_room.duration, activity.id, activity_room.room.id, activity_room.room.floor)
                     )
+                    for room_condition in activity_room.room.conditions:
+                        self.__conditions_per_room[activity_room.room.id].append(room_condition)
                 for condition in activity.conditions:
                     self.__conditions_per_assessment[assessment.id].append(condition)
             schedule = [activities] * len(assessment.activities)
@@ -114,6 +112,8 @@ class Solver:
     def __define_variables(self):
         """Helper function for defining the variables of the solver
         """
+        assert self.__schedules is not None, 'Invalid schedules'
+        
         for client_id, schedule in enumerate(self.__schedules):
             previous_end = None
             for activity_index, activities in enumerate(schedule):
@@ -173,7 +173,7 @@ class Solver:
                         
                     self.__model.AddExactlyOne(current_activities)
                 else:
-                    self.__model.Add(floor == activity.room_floor)
+                    self.__model.Add(floor == activities[0].room_floor)
                     
                     self.__activity_start_time_int_vars[(client_id, activities[0].id)].append(start)
                     self.__activity_end_time_int_vars[(client_id, activities[0].id)].append(end)
@@ -183,7 +183,7 @@ class Solver:
                     self.__time_interval_vars_per_room[activities[0].room_id].append(interval)
                     self.__time_interval_vars_per_client[client_id].append(interval)
                     
-                    self.__activity_index_room_bool_vars[(client_id, activity.id, activity_index, activities[0].room_id)] = self.__model.NewConstant(1)
+                    self.__activity_index_room_bool_vars[(client_id, activities[0].id, activity_index, activities[0].room_id)] = self.__model.NewConstant(1)
                     self.__activity_bool_vars[(client_id,  activities[0].id)].append(self.__model.NewConstant(1))                    
                 
             self.__last_activity_end_time_int_vars.append(previous_end)
@@ -552,6 +552,9 @@ class Solver:
         for literal in matching_literals:
             if generate:
                 self.__model.Add(literal == 0)
+    
+    def __apply_room_constraints(self):
+        pass
     
     # Room Conditions
     def __apply_maximum_capacity_constraint(self, room_id: int, capacity: int, generate: bool):

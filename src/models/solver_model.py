@@ -1,39 +1,39 @@
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 from datetime import timedelta
 
 class ClientType(Enum):
-    OPTIMAL = 0
-    ULTIMATE = 1
+    ELITE = 'ELITE'
+    ULTIMATE = 'ULTIMATE'
 
 class ConditionScope(Enum):
-    ACTIVITY = 0
-    ROOM = 1
+    ACTIVITY = 'ACTIVITY'
+    ROOM = 'ROOM'
 
 class ActivityConditionOption(Enum):
-    BEFORE = 0
-    AFTER = 1
-    RIGHT_AFTER = 2
-    RIGHT_BEFORE = 3
-    BETWEEN = 4
-    WITHIN_AFTER = 5
-    WITHIN_BEFORE = 6
-    IN_FIXED_ORDER_AS = 7
+    BEFORE = 'BEFORE'
+    AFTER = 'AFTER'
+    RIGHT_AFTER = 'RIGHT_AFTER'
+    RIGHT_BEFORE = 'RIGHT_BEFORE'
+    BETWEEN = 'BETWEEN'
+    WITHIN_AFTER = 'WITHIN_AFTER'
+    WITHIN_BEFORE = 'WITHIN_BEFORE'
+    IN_FIXED_ORDER_AS = 'IN_FIXED_ORDER_AS'
 
 class ActivityConditionOptionType(Enum):
-    ACTIVITY = 0
-    TIME = 1
-    ORDER = 2
+    ACTIVITY = 'ACTIVITY'
+    TIME = 'TIME'
+    ORDER = 'ORDER'
   
 class RoomConditionOption(Enum):
-    MAXIMUM = 0
-    SAME = 1
-    UNIQUE = 2
+    MAXIMUM = 'MAXIMUM'
+    SAME = 'SAME'
+    UNIQUE = 'UNIQUE'
 
 class RoomConditionOptionType(Enum):
-    ACTIVITY = 0
-    CLIENT = 1
+    ACTIVITY = 'ACTIVITY'
+    CLIENT = 'CLIENT'
 
 @dataclass
 class Condition:
@@ -72,3 +72,21 @@ class Assessment:
 class Client:
     id: int
     assessment: Assessment
+
+ENUMS = set((
+    ClientType,
+    ConditionScope,
+    ActivityConditionOption,
+    ActivityConditionOptionType,
+    RoomConditionOption,
+    RoomConditionOptionType,
+))
+
+MODELS = set((
+    Condition,
+    Room,
+    ActivityRoom,
+    Activity,
+    Assessment,
+    Client,
+))
