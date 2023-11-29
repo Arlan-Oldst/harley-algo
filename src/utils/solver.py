@@ -666,8 +666,6 @@ class Solver:
             return self.__solver.StatusName(self.__status)
         
         for client_id, schedule in enumerate(self.__schedules):
-            for literal, other_literal in zip(self.__client_activity_rooms[(client_id, 'Check-in, Consent & Change', 'St James')], self.__client_activity_rooms[(client_id, 'Lunch', 'St James')]):
-                print(self.__solver.Value(literal), self.__solver.Value(other_literal))
             print(f'Client {client_id}')
             a = []
             for activity_index, activities in enumerate(schedule):
