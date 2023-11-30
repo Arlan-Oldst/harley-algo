@@ -6,3 +6,4 @@
 harley/**
 harley_google_or_tools_research.py
 *.ts
+event.json
