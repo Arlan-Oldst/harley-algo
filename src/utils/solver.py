@@ -2,8 +2,9 @@ from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model import IntVar
 from typing import List, Dict, Tuple, Any
 from src.models.solver_model import Room, ActivityRoom, ActivityConditionOption, ActivityConditionOptionType, ConditionScope, Condition, Assessment, Activity, RoomConditionOption, RoomConditionOptionType, RoomType
-from datetime import timedelta
+from datetime import timedelta, datetime
 import collections
+import os
 
 class Solver:
     """A class for solving the scheduling problem of the assessments.
@@ -708,6 +709,7 @@ class Solver:
     
     def generate(self):
         assert self.__assessments is not None, 'Invalid assessments'
+        start_time = datetime.now()
         
         self.__initialize_variables()
         self.__define_variables()
@@ -717,9 +719,11 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=3).total_seconds()
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
+        self.__solver.parameters.solut
         self.__status = self.__solver.Solve(self.__model)        
         
+        print(self.__solver.StatusName(self.__status))
         if self.__status != cp_model.OPTIMAL and self.__status != cp_model.FEASIBLE:
             raise ValueError('Cannot generate schedule')
         
@@ -764,6 +768,9 @@ class Solver:
                 #         s_oa,
                 #     ))
             self.__generated_schedules.append(generated_schedule)
+        
+        end_time = datetime.now()
+        print(f'Total Time: {end_time - start_time}')
         
         return self.__generated_schedules
     

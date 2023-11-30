@@ -1,0 +1,8 @@
+**/__pycache__/
+.dist/
+.vscode/
+.git/
+.gitignore
+*.ts
+event.json
+harley_google_or_tools_research.py
