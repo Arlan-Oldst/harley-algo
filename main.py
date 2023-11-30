@@ -26,4 +26,4 @@ if __name__ == '__main__':
     event = None
     with open('event.json', 'r') as jsonfile:
         event = json.load(jsonfile)
-    handler(event, None)
+    print(handler(event, None))

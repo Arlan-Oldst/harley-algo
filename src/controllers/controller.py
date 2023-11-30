@@ -29,11 +29,11 @@ class Controller:
         
         # TODO: generate scenario
         generated_scenario = solver.generate()
-        print(generated_scenario)
         
         # TODO: instantiate GeneratedScenario
         
         # TODO: jsonify GeneratedScenario
         
         # TODO: return JSON
+        return json.dumps(generated_scenario)
         

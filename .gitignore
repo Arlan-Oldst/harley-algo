@@ -1,8 +1,8 @@
 .vscode
 .dist
 .git
-**/__pycache__
+**/__pycache__/**
+*.pyc
 harley/**
 harley_google_or_tools_research.py
 *.ts
-*.pyc

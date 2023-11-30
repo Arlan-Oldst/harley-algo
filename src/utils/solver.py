@@ -44,6 +44,9 @@ class Solver:
         
         self.__clients_per_assessment = collections.defaultdict(list)
         self.__time_interval_vars_per_room = collections.defaultdict(list)
+        self.__start_int_vars_per_activity = collections.defaultdict(list)
+        self.__end_int_vars_per_activity = collections.defaultdict(list)
+        self.__room_bool_vars_per_activity_index = collections.defaultdict(list)
         self.__time_interval_vars_per_client = collections.defaultdict(list)
         self.__activity_bool_vars = collections.defaultdict(list)
         self.__client_activity_rooms = collections.defaultdict(list)
@@ -116,6 +119,7 @@ class Solver:
         """
         assert self.__schedules is not None, 'Invalid schedules'
         
+        previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
             previous_end = None
             for activity_index, activities in enumerate(schedule):
@@ -140,8 +144,13 @@ class Solver:
                 
                 if previous_end is not None:
                     self.__model.Add(start >= previous_end)
+                    
+                if previous_start is not None and activity_index == 0:
+                    self.__model.Add(start >= previous_start)
                 
                 previous_end = end
+                if activity_index == 0:
+                    previous_start = start
                   
                 if len(activities) > 1:
                     current_activities = []
@@ -158,8 +167,11 @@ class Solver:
                         
                         self.__time_interval_vars_per_room[activity.room_id].append(current_interval)
                         self.__time_interval_vars_per_client[client_id].append(current_interval)
+                        self.__start_int_vars_per_activity[(activity_index, activity.id)].append(current_start)
+                        self.__end_int_vars_per_activity[(activity_index, activity.id)].append(current_end)
                         
                         self.__activity_index_room_bool_vars[(client_id, activity.id, activity_index, activity.room_id)] = current_activity
+                        self.__room_bool_vars_per_activity_index[(activity_index, activity.id)].append(current_activity)
                         self.__activity_bool_vars[(client_id, activity.id)].append(current_activity)
                         
                         self.__model.Add(start == current_start).OnlyEnforceIf(current_activity)
@@ -187,8 +199,11 @@ class Solver:
                     
                     self.__time_interval_vars_per_room[activities[0].room_id].append(interval)
                     self.__time_interval_vars_per_client[client_id].append(interval)
+                    self.__start_int_vars_per_activity[(activity_index, activities[0].id)].append(start)
+                    self.__end_int_vars_per_activity[(activity_index, activities[0].id)].append(end)
                     
                     self.__activity_index_room_bool_vars[(client_id, activities[0].id, activity_index, activities[0].room_id)] = self.__model.NewConstant(1)
+                    self.__room_bool_vars_per_activity_index[(activity_index, activity.id)].append(self.__model.NewConstant(1))
                     self.__client_activity_rooms[(client_id, activities[0].id, activities[0].room_id)].append(self.__model.NewConstant(1))
                     self.__activity_bool_vars[(client_id,  activities[0].id)].append(self.__model.NewConstant(1))                    
                 
@@ -206,13 +221,15 @@ class Solver:
         if not self.__simultaneous_transfers:
             self.__model.AddNoOverlap(self.__transfer_time_interval_vars.values())
         
-        self.__apply_no_overlap_activity_constraint(201)
+        self.__apply_no_overlap_activity_index_constraint(0)
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
+        self.__apply_gap_between_activity_constraint('MRI')
         
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_transfer_constraint(client_id, schedule)
             self.__apply_max_gap_constraint(client_id, schedule)
             self.__apply_no_overlap_client_constraint(client_id)
+            self.__apply_no_gap_between_indices_constraint(client_id, 0, 1)
             
             assessment = self.__get_assessment_by_client_id(client_id)
             for activity in assessment.activities:
@@ -221,20 +238,60 @@ class Solver:
             for activity_index, _ in enumerate(self.__schedules[client_id]):
                 self.__model.AddModuloEquality(0, self.__activity_index_start_time_int_vars[(client_id, activity_index)], self.__time_max_interval)
                 self.__model.AddModuloEquality(0, self.__activity_index_end_time_int_vars[(client_id, activity_index)], self.__time_max_interval)
+                
+        for room_id in self.__time_interval_vars_per_room.keys():
+            self.__apply_no_overlap_room_constraint(room_id)
+    
+    def __apply_no_gap_between_indices_constraint(self, client_id: int, activity_index: int, other_activity_index):
+        """Helper function for applying the no gap between activities at indices constraint of the solver.
+        """
+        assert other_activity_index > activity_index, 'Invalid activity indices'
+        self.__model.Add(self.__activity_index_start_time_int_vars[(client_id, other_activity_index)] - self.__activity_index_end_time_int_vars[(client_id, activity_index)] == 0)
     
     def __apply_no_overlap_client_constraint(self, client_id: int):
         """Helper function for applying the no overlap constraint at the client level of the solver.
         """
         self.__model.AddNoOverlap(self.__time_interval_vars_per_client[client_id])
     
-    def __apply_no_overlap_activity_constraint(self, activity_id: int):
+    def __apply_no_overlap_room_constraint(self, room_id: int):
+        """Helper function for applying the no overlap constraint at the room level of the solver.
+        """
+        self.__model.AddNoOverlap(self.__time_interval_vars_per_room[room_id])
+    
+    def __apply_gap_between_activity_constraint(self, activity_id: int):
+        """Helper functionm for applying the gap between activities at specific room of the solver.
+        """
+        for activity_index, _ in enumerate(self.__assessments[0].activities):
+            other_activity_index = activity_index + 1
+            if other_activity_index < len(self.__assessments[0].activities):
+                for other_start, other_end, other_room_bool in zip(self.__start_int_vars_per_activity[(other_activity_index, activity_id)], self.__end_int_vars_per_activity[(other_activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(other_activity_index, activity_id)]):
+                    for start, end, room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
+                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(other_room_bool, room_bool)
+                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(other_room_bool, room_bool)
+                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(other_room_bool, room_bool)
+                        
+            for other_start, other_end, other_room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
+                    for start, end, room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
+                        if other_start == start:
+                            continue
+                        
+                        greater_than = self.__model.NewBoolVar(f'greater_than')
+                        self.__model.Add(other_start > start).OnlyEnforceIf(greater_than)
+                        self.__model.Add(other_start <= start).OnlyEnforceIf(greater_than.Not())
+                        
+                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
+                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
+                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
+                        
+                        self.__model.Add(start - other_start >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
+                        self.__model.Add(end - other_end >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
+                        self.__model.Add(start - other_end >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
+    
+    def __apply_no_overlap_activity_index_constraint(self, activity_index: int):
         """Helper function for applying the no overlap constraint at the activity level of the solver.
         """
-        matching_intervals = [i for k, v in self.__activity_time_interval_vars.items() for i in v if k[1] == activity_id]
+        matching_intervals = [v for k, v in self.__activity_index_time_interval_vars.items() if k[1] == activity_index]
         self.__model.AddNoOverlap(matching_intervals)
-    
-    def __apply_assessment_precedence_constraint(self, assessment_id: int, other_assessment_id: int, generate: bool = True):
-        pass
     
     def __apply_simultaneous_transfers_constraint(self, generate: bool = True):
         """Helper function for applying allowing simultaneous transfers constraint of the solver.
@@ -660,51 +717,55 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__status = self.__solver.Solve(self.__model)
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=3).total_seconds()
+        self.__status = self.__solver.Solve(self.__model)        
         
-        if self.__status != cp_model.OPTIMAL:
-            return self.__solver.StatusName(self.__status)
+        if self.__status != cp_model.OPTIMAL and self.__status != cp_model.FEASIBLE:
+            raise ValueError('Cannot generate schedule')
+        
+        self.__generated_schedules = []
         
         for client_id, schedule in enumerate(self.__schedules):
-            print(f'Client {client_id}')
-            a = []
+            generated_schedule = []
             for activity_index, activities in enumerate(schedule):
-                s_a = None
-                e_a = None
+                start_activity = None
+                end_activity = None
                 for activity in activities:
                     if self.__solver.Value(self.__activity_index_room_bool_vars[(client_id, activity.id, activity_index, activity.room_id)]):
-                        s_a = self.__solver.Value(self.__activity_index_start_time_int_vars[(client_id, activity_index)])
-                        e_a = self.__solver.Value(self.__activity_index_end_time_int_vars[(client_id, activity_index)])
-                        a.append((
+                        start_activity = self.__solver.Value(self.__activity_index_start_time_int_vars[(client_id, activity_index)])
+                        end_activity = self.__solver.Value(self.__activity_index_end_time_int_vars[(client_id, activity_index)])
+                        generated_schedule.append((
                             activity.id,
                             activity.room_id,
-                            s_a,
-                            e_a,
+                            activity.room_floor,
+                            start_activity,
+                            end_activity,
                         ))
                         break
                 
                 if activity_index + 1 == len(schedule):
                     continue
                 
-                s_gt = self.__solver.Value(self.__transfer_start_time_int_vars[(client_id, activity_index, activity_index + 1)])
-                e_gt = self.__solver.Value(self.__transfer_end_time_int_vars[(client_id, activity_index, activity_index + 1)])
-                s_oa = self.__solver.Value(self.__activity_index_start_time_int_vars[(client_id, activity_index + 1)])
+                start_transfer = self.__solver.Value(self.__transfer_start_time_int_vars[(client_id, activity_index, activity_index + 1)])
+                end_transfer = self.__solver.Value(self.__transfer_end_time_int_vars[(client_id, activity_index, activity_index + 1)])
+                # s_oa = self.__solver.Value(self.__activity_index_start_time_int_vars[(client_id, activity_index + 1)])
                 if self.__solver.Value(self.__room_floor_bool_vars[(client_id, activity_index, activity_index + 1)]):
-                    a.append((
+                    generated_schedule.append((
                         'Transfer',
-                        s_gt,
-                        e_gt,
+                        'Stairs',
+                        'None',
+                        start_transfer,
+                        end_transfer,
                     ))
-                elif e_a != s_oa:
-                    a.append((
-                        'Gap',
-                        e_a,
-                        s_oa,
-                    ))
-                
-            print(a)
+                # elif end_activity != s_oa:
+                #     generated_schedule.append((
+                #         'Gap',
+                #         end_activity,
+                #         s_oa,
+                #     ))
+            self.__generated_schedules.append(generated_schedule)
         
-        return self.__solver.StatusName(self.__status)
+        return self.__generated_schedules
     
 if __name__ == '__main__':
     TIME_START = timedelta(hours=7, minutes=15)
