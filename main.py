@@ -6,7 +6,21 @@ Assumptions:
  - The SQS message only contains the ScenarioAction ID
 """
 from src.controllers.controller import Controller
+from flask import Flask
+from flask_cors import CORS
 import json
+
+app = Flask(__name__)
+CORS(app)
+
+@app.route('/health', methods=['GET'])
+def get_healthcheck():
+    return 'OK', 200
+
+@app.route('/', methods=['GET'])
+def get_schedule(event):
+    event = json.loads(event)
+    return Controller.retrieve_generated_scenario(**event), 200
 
 # def handler(event, context):
 #     record: dict
@@ -18,12 +32,8 @@ import json
         
 #         return Controller.retrieve_generated_scenario(scenario_action_id)
         
-def handler(event, context):
-    return Controller.retrieve_generated_scenario(**event)
+# def handler(event, context):
+#     return Controller.retrieve_generated_scenario(**event)
 
 if __name__ == '__main__':
-    import json
-    event = None
-    with open('event.json', 'r') as jsonfile:
-        event = json.load(jsonfile)
-    print(handler(event, None))
+    app.run(debug=True, host='0.0.0.0')

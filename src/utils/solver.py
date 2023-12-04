@@ -218,10 +218,7 @@ class Solver:
         - No overlap between activities
         - All activities must be performed
         - All times must be divisible by 5
-        """
-        if not self.__simultaneous_transfers:
-            self.__model.AddNoOverlap(self.__transfer_time_interval_vars.values())
-        
+        """       
         self.__apply_no_overlap_activity_index_constraint(0)
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
         self.__apply_gap_between_activity_constraint('MRI')
@@ -276,17 +273,19 @@ class Solver:
                         if other_start == start:
                             continue
                         
-                        greater_than = self.__model.NewBoolVar(f'greater_than')
-                        self.__model.Add(other_start > start).OnlyEnforceIf(greater_than)
-                        self.__model.Add(other_start <= start).OnlyEnforceIf(greater_than.Not())
+                        other_greater_than_start = self.__model.NewBoolVar(f'other_start_greater_than_start')
+                        self.__model.Add(other_start > start).OnlyEnforceIf(other_greater_than_start)
+                        self.__model.Add(other_start <= start).OnlyEnforceIf(other_greater_than_start.Not())
+                                                
+                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
+                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
+                        self.__model.Add(other_end - start >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
+                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
                         
-                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
-                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
-                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(greater_than, other_room_bool, room_bool)
-                        
-                        self.__model.Add(start - other_start >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
-                        self.__model.Add(end - other_end >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
-                        self.__model.Add(start - other_end >= 5).OnlyEnforceIf(greater_than.Not(), other_room_bool, room_bool)
+                        self.__model.Add(start - other_start >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
+                        self.__model.Add(end - other_end >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
+                        self.__model.Add(end - other_start >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
+                        self.__model.Add(start - other_end >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
     
     def __apply_no_overlap_activity_index_constraint(self, activity_index: int):
         """Helper function for applying the no overlap constraint at the activity level of the solver.
@@ -720,7 +719,6 @@ class Solver:
         
         self.__solver = cp_model.CpSolver()
         self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
-        self.__solver.parameters.solut
         self.__status = self.__solver.Solve(self.__model)        
         
         print(self.__solver.StatusName(self.__status))
