@@ -6,6 +6,20 @@ from datetime import timedelta, datetime
 import collections
 import os
 
+class SolverLimiter(cp_model.CpSolverSolutionCallback):
+    def __init__(self, limit):
+        cp_model.CpSolverSolutionCallback.__init__(self)
+        self.__solution_count = 0
+        self.__solution_limit = limit
+        
+    def on_solution_callback(self):
+        self.__solution_count += 1
+        if self.__solution_count >= self.__solution_limit:
+            self.StopSearch()
+
+    def solution_count(self):
+        return self.__solution_count
+
 class Solver:
     """A class for solving the scheduling problem of the assessments.
     
@@ -42,6 +56,7 @@ class Solver:
         self.__schedules: List[List[List[self.__activity_type]]] = []
         self.__conditions_per_room = collections.defaultdict(list)
         self.__conditions_per_assessment: Dict[int, List[Condition]] = collections.defaultdict(list)
+        self.__fixed_order_conditions_per_assessment: Dict[int, List[Condition]] = collections.defaultdict(list)
         
         self.__clients_per_assessment = collections.defaultdict(list)
         self.__time_interval_vars_per_room = collections.defaultdict(list)
@@ -99,7 +114,7 @@ class Solver:
         previous_assessment_quantity = 0
         for assessment in self.__assessments:
             activities = []
-            for activity in assessment.activities:
+            for activity_index, activity in enumerate(assessment.activities):
                 for activity_room in activity.rooms:
                     activities.append(
                         self.__activity_type(activity_room.duration, activity.id, activity_room.room.id, activity_room.room.floor)
@@ -107,18 +122,40 @@ class Solver:
                     for room_condition in activity_room.room.conditions:
                         self.__conditions_per_room[activity_room.room.id].append(room_condition)
                 for condition in activity.conditions:
-                    self.__conditions_per_assessment[assessment.id].append(condition)
+                    if condition.option == ActivityConditionOption.IN_FIXED_ORDER_AS.value and condition.option_type == ActivityConditionOptionType.ORDER.value and condition.scope == ConditionScope.ACTIVITY.value:
+                        self.__fixed_order_conditions_per_assessment[assessment.id].append(condition)
+                    else:
+                        self.__conditions_per_assessment[assessment.id].append(condition)
             schedule = [activities] * len(assessment.activities)
             self.__schedules.extend(
                 [schedule] * assessment.quantity
             )
             self.__clients_per_assessment[assessment.id].extend(list(range(previous_assessment_quantity, previous_assessment_quantity + assessment.quantity)))
+            
+            for condition in self.__fixed_order_conditions_per_assessment[assessment.id]:
+                order = condition.args.get('order', None)
+                activity_id = condition.args.get('activity_id', None)
+                
+                if order is None or activity_id is None:
+                    continue
+                                
+                order = int(order)
+                for client_id in range(previous_assessment_quantity, previous_assessment_quantity + assessment.quantity):
+                    for activity_index, activity in enumerate(assessment.activities):
+                        if activity_index == order:
+                            new_activities = [a for a in self.__schedules[client_id][activity_index] if a.id == activity_id]
+                            self.__schedules[client_id][activity_index] = new_activities
+                        else:
+                            new_activities = [a for a in self.__schedules[client_id][activity_index] if a.id != activity_id]
+                            self.__schedules[client_id][activity_index] = new_activities
+                
             previous_assessment_quantity += assessment.quantity
     
     def __define_variables(self):
         """Helper function for defining the variables of the solver
         """
         assert self.__schedules is not None, 'Invalid schedules'
+        start_time = datetime.now()
         
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
@@ -168,8 +205,8 @@ class Solver:
                         
                         self.__time_interval_vars_per_room[activity.room_id].append(current_interval)
                         self.__time_interval_vars_per_client[client_id].append(current_interval)
-                        self.__start_int_vars_per_activity[(activity_index, activity.id)].append(current_start)
-                        self.__end_int_vars_per_activity[(activity_index, activity.id)].append(current_end)
+                        self.__start_int_vars_per_activity[activity.id].append(current_start)
+                        self.__end_int_vars_per_activity[activity.id].append(current_end)
                         
                         self.__activity_index_room_bool_vars[(client_id, activity.id, activity_index, activity.room_id)] = current_activity
                         self.__room_bool_vars_per_activity_index[(activity_index, activity.id)].append(current_activity)
@@ -209,6 +246,9 @@ class Solver:
                     self.__activity_bool_vars[(client_id,  activities[0].id)].append(self.__model.NewConstant(1))                    
                 
             self.__last_activity_end_time_int_vars.append(previous_end)
+        
+        end_time = datetime.now()
+        print(f'Total Time for defining variables: {(end_time - start_time).total_seconds() / 60.0} minutes')
     
     def __apply_general_constraints(self):
         """Helper function for applying all general constraints of the solver namely:
@@ -218,10 +258,8 @@ class Solver:
         - No overlap between activities
         - All activities must be performed
         - All times must be divisible by 5
-        """       
-        self.__apply_no_overlap_activity_index_constraint(0)
-        self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
-        self.__apply_gap_between_activity_constraint('MRI')
+        """
+        start_time = datetime.now()
         
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_transfer_constraint(client_id, schedule)
@@ -239,6 +277,13 @@ class Solver:
                 
         for room_id in self.__time_interval_vars_per_room.keys():
             self.__apply_no_overlap_room_constraint(room_id)
+            
+        self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
+        self.__apply_no_overlap_activity_index_constraint(0)
+        self.__apply_gap_between_activity_constraint('MRI')
+        
+        end_time = datetime.now()
+        print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
     
     def __apply_no_gap_between_indices_constraint(self, client_id: int, activity_index: int, other_activity_index):
         """Helper function for applying the no gap between activities at indices constraint of the solver.
@@ -259,33 +304,22 @@ class Solver:
     def __apply_gap_between_activity_constraint(self, activity_id: int):
         """Helper functionm for applying the gap between activities at specific room of the solver.
         """
-        for activity_index, _ in enumerate(self.__assessments[0].activities):
-            other_activity_index = activity_index + 1
-            if other_activity_index < len(self.__assessments[0].activities):
-                for other_start, other_end, other_room_bool in zip(self.__start_int_vars_per_activity[(other_activity_index, activity_id)], self.__end_int_vars_per_activity[(other_activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(other_activity_index, activity_id)]):
-                    for start, end, room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
-                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(other_room_bool, room_bool)
-                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(other_room_bool, room_bool)
-                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(other_room_bool, room_bool)
-                        
-            for other_start, other_end, other_room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
-                    for start, end, room_bool in zip(self.__start_int_vars_per_activity[(activity_index, activity_id)], self.__end_int_vars_per_activity[(activity_index, activity_id)], self.__room_bool_vars_per_activity_index[(activity_index, activity_id)]):
-                        if other_start == start:
-                            continue
-                        
-                        other_greater_than_start = self.__model.NewBoolVar(f'other_start_greater_than_start')
-                        self.__model.Add(other_start > start).OnlyEnforceIf(other_greater_than_start)
-                        self.__model.Add(other_start <= start).OnlyEnforceIf(other_greater_than_start.Not())
-                                                
-                        self.__model.Add(other_start - start >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
-                        self.__model.Add(other_end - end >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
-                        self.__model.Add(other_end - start >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
-                        self.__model.Add(other_start - end >= 5).OnlyEnforceIf(other_greater_than_start, other_room_bool, room_bool)
-                        
-                        self.__model.Add(start - other_start >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
-                        self.__model.Add(end - other_end >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
-                        self.__model.Add(end - other_start >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
-                        self.__model.Add(start - other_end >= 5).OnlyEnforceIf(other_greater_than_start.Not(), other_room_bool, room_bool)
+        for start in self.__start_int_vars_per_activity[activity_id]:
+            for end in self.__end_int_vars_per_activity[activity_id]:
+                self.__model.Add(start != end)
+                
+            for other_start in self.__start_int_vars_per_activity[activity_id]:
+                if start == other_start:
+                    continue
+                
+                self.__model.Add(start != other_start)
+                
+        for end in self.__end_int_vars_per_activity[activity_id]:
+            for other_end in self.__start_int_vars_per_activity[activity_id]:
+                if end == other_end:
+                    continue
+                
+                self.__model.Add(end != other_end)
     
     def __apply_no_overlap_activity_index_constraint(self, activity_index: int):
         """Helper function for applying the no overlap constraint at the activity level of the solver.
@@ -347,6 +381,8 @@ class Solver:
         - Within after activity constraint
         - Within before activity constraint
         """
+        start_time = datetime.now()
+        
         for client_id, _ in enumerate(self.__schedules):
             for condition in self.__conditions_per_assessment[self.__get_assessment_by_client_id(client_id).id]:
                 if condition.scope != ConditionScope.ACTIVITY.value:
@@ -406,6 +442,9 @@ class Solver:
                         raise ValueError('Invalid condition option type for in fixed order as constraint')
                 else:
                     raise ValueError('Invalid condition option')
+        
+        end_time = datetime.now()
+        print(f'Total Time for applying activity constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
         
     # Activity Conditions
     def __apply_before_activity_constraint(self, client_id: int, activity_id: int, other_activity_id: int, generate: bool = True):
@@ -620,6 +659,8 @@ class Solver:
                 self.__model.Add(literal == 0)
     
     def __apply_room_constraints(self):
+        start_time = datetime.now()
+        
         for room_id, conditions in self.__conditions_per_room.items():
             condition: Condition
             for condition in conditions:
@@ -642,7 +683,10 @@ class Solver:
                     else:
                         raise ValueError('Invalid condition option type for same room constraint')
                 else:
-                    raise ValueError('Invalid condition option')                    
+                    raise ValueError('Invalid condition option')
+
+        end_time = datetime.now()
+        print(f'Total Time for applying room constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
     
     # Room Conditions
     def __apply_maximum_capacity_constraint(self, room_id: int, activity_id, capacity: int, generate: bool):
@@ -718,7 +762,7 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 10))).total_seconds()
         self.__status = self.__solver.Solve(self.__model)        
         
         print(self.__solver.StatusName(self.__status))
@@ -768,370 +812,6 @@ class Solver:
             self.__generated_schedules.append(generated_schedule)
         
         end_time = datetime.now()
-        print(f'Total Time: {end_time - start_time}')
+        print(f'Total Time: {(end_time - start_time).total_seconds() / 60.0} minutes')
         
         return self.__generated_schedules
-    
-if __name__ == '__main__':
-    TIME_START = timedelta(hours=7, minutes=15)
-    TIME_END = timedelta(hours=18, minutes=0)
-    TIME_MAX_INTERVAL = timedelta(hours=0, minutes=5)
-    TIME_MAX_GAP = timedelta(hours=0, minutes=5)
-    TIME_TRANSFER = timedelta(hours=0, minutes=5)
-    
-    NUM_FLOORS = 2
-
-    NUM_ULT_CLIENTS = 0
-    NUM_OPT_CLIENTS = 8
-
-    NUM_CLIENT_ROOMS = 8
-    NUM_BLOODS_ROOM = 1
-    NUM_CONSULT_ROOMS = 3
-    NUM_STRESS_ROOMS = 2
-    NUM_MRI_15_ROOMS = 1
-    NUM_MRI_3_ROOMS = 1
-    NUM_ULTRASOUND_ROOMS = 2
-    NUM_EYES_ROOMS = 1
-    NUM_RAD_ROOMS = 1
-    
-    SIMULTANEOUS_TRANFERS = False
-    
-    SUM_1 = sum((NUM_CLIENT_ROOMS, NUM_ULTRASOUND_ROOMS))
-    SUM_2 = sum((SUM_1, NUM_MRI_15_ROOMS))
-    SUM_3 = sum((SUM_2, NUM_MRI_3_ROOMS))
-    SUM_4 = sum((SUM_3, NUM_STRESS_ROOMS))
-    SUM_5 = sum((SUM_4, NUM_CONSULT_ROOMS))
-    SUM_6 = sum((SUM_5, NUM_EYES_ROOMS))
-    SUM_7 = sum((SUM_6, NUM_BLOODS_ROOM))
-    SUM_8 = sum((SUM_7, NUM_RAD_ROOMS))
-    
-    BASE_ROOM_ID = 300
-    CLIENT_ROOMS = [
-        Room(
-            id=i,
-            name=f'Client Room {i}',
-            type=RoomType.CLIENT,
-            floor=1,
-            conditions=[
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.UNIQUE,
-                    option_type=RoomConditionOptionType.ACTIVITY,
-                    args=dict(activity_id=201, generate=True)
-                ),
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.UNIQUE,
-                    option_type=RoomConditionOptionType.ACTIVITY,
-                    args=dict(activity_id=208, generate=True)
-                ),
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.UNIQUE,
-                    option_type=RoomConditionOptionType.ACTIVITY,
-                    args=dict(activity_id=211, generate=True)
-                ),
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.SAME,
-                    option_type=RoomConditionOptionType.ACTIVITY,
-                    args=dict(activity_ids=[201, 208, 211], generate=True)
-                )
-            ]
-        ) for i in range(BASE_ROOM_ID + 1, BASE_ROOM_ID + NUM_CLIENT_ROOMS + 1)
-    ]
-    PHLEBOTOMY_ROOMS = [
-        Room(
-            id=i,
-            name=f'Phelobotomy Room {i}',
-            type=RoomType.OTHER,
-            floor=1,
-            conditions=[]
-        ) for i in range(BASE_ROOM_ID + SUM_6 + 1, BASE_ROOM_ID + SUM_7 + 1)
-    ]
-    CONSULTATION_ROOMS = [
-        Room(
-            id=i,
-            name=f'Consultation Room {i}',
-            type=RoomType.OTHER,
-            floor=2,
-            conditions=[
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.MAXIMUM,
-                    option_type=RoomConditionOptionType.CLIENT,
-                    args=dict(max_clients=3, generate=True)
-                ),
-                Condition(
-                    scope=ConditionScope.ROOM,
-                    option=RoomConditionOption.SAME,
-                    option_type=RoomConditionOptionType.ACTIVITY,
-                    args=dict(activity_ids=[203, 210], generate=True)
-                )
-            ]
-        ) for i in range(BASE_ROOM_ID + SUM_4 + 1, BASE_ROOM_ID + SUM_5 + 1)
-    ]
-    CARDIAC_ROOMS = [
-        Room(
-            id=i,
-            name=f'Cardiac Room {i}',
-            type=RoomType.OTHER,
-            floor=1,
-            conditions=[]
-        ) for i in range(BASE_ROOM_ID + SUM_3 + 1, BASE_ROOM_ID + SUM_4 + 1)
-    ]
-    MRI_ROOMS = [
-        Room(
-            id=i,
-            name=f'MRI Room {n}',
-            type=RoomType.OTHER,
-            floor=2,
-            conditions=[]
-        ) for i, n in zip(range(BASE_ROOM_ID + SUM_1 + 1, BASE_ROOM_ID + SUM_2 + 1), [*(['1.5T'] * NUM_MRI_15_ROOMS), *(['3T'] * NUM_MRI_3_ROOMS)])
-    ]
-    ULTRASOUND_ROOMS = [
-        Room(
-            id=i,
-            name=f'Ultrasound Room {i}',
-            type=RoomType.OTHER,
-            floor=2,
-            conditions=[]
-        ) for i in range(BASE_ROOM_ID + NUM_CLIENT_ROOMS + 1, BASE_ROOM_ID + SUM_1 + 1)
-    ]
-    EYES_EARS_ROOMS = [
-        Room(
-            id=i,
-            name=f'Eyes and Ears Room {i}',
-            type=RoomType.OTHER,
-            floor=1,
-            conditions=[]
-        ) for i in range(BASE_ROOM_ID + SUM_5 + 1, BASE_ROOM_ID + SUM_6 + 1)
-    ]
-    RADIOLOGY_ROOMS = [
-        Room(
-            id=i,
-            name=f'Radiology Room {i}',
-            type=RoomType.OTHER,
-            floor=2,
-            conditions=[]
-        ) for i in range(BASE_ROOM_ID + SUM_7 + 1, BASE_ROOM_ID + SUM_8 + 1)
-    ]
-    
-    solver = Solver(TIME_START, TIME_END, TIME_MAX_INTERVAL, TIME_MAX_GAP, TIME_TRANSFER, NUM_FLOORS, SIMULTANEOUS_TRANFERS)
-    solver.assessments = [
-        Assessment(
-            id=101,
-            name='Optimal',
-            activities=[
-                Activity(
-                    id=201,
-                    name='Check-in',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.IN_FIXED_ORDER_AS,
-                            option_type=ActivityConditionOptionType.ORDER,
-                            args=dict(activity_id=201, order=0, generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=10
-                        ) for room in CLIENT_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=202,
-                    name='Bloods',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.IN_FIXED_ORDER_AS,
-                            option_type=ActivityConditionOptionType.ORDER,
-                            args=dict(activity_id=202, order=1, generate=True)
-                        ),
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.WITHIN_AFTER,
-                            option_type=ActivityConditionOptionType.ACTIVITY,
-                            args=dict(activity_id=202, other_activity_id=201, time_after=timedelta(minutes=30), generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=10
-                        ) for room in PHLEBOTOMY_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=203,
-                    name='First Consultation',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.BEFORE,
-                            option_type=ActivityConditionOptionType.ACTIVITY,
-                            args=dict(activity_id=203, other_activity_id=205, generate=True)
-                        ),
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.WITHIN_AFTER,
-                            option_type=ActivityConditionOptionType.ACTIVITY,
-                            args=dict(activity_id=203, other_activity_id=201, time_after=timedelta(hours=2), generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=60
-                        ) for room in CONSULTATION_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=204,
-                    name='Stress Echo',
-                    conditions=[],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=50
-                        ) for room in CARDIAC_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=205,
-                    name='MRI',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.BEFORE,
-                            option_type=ActivityConditionOptionType.TIME,
-                            args=dict(activity_id=205, time_before=timedelta(hours=16), generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=80
-                        ) if '1.5T' in room.name else 
-                        ActivityRoom(
-                            room=room,
-                            duration=20
-                        ) for room in MRI_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=206,
-                    name='Ultrasound',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.BEFORE,
-                            option_type=ActivityConditionOptionType.ACTIVITY,
-                            args=dict(activity_id=206, other_activity_id=208, generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=60
-                        ) for room in ULTRASOUND_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=207,
-                    name='Eyes & Ears',
-                    conditions=[],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=10
-                        ) for room in EYES_EARS_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=208,
-                    name='Lunch',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.BETWEEN,
-                            option_type=ActivityConditionOptionType.TIME,
-                            args=dict(activity_id=208, time_before=timedelta(hours=11), time_after=timedelta(hours=16), generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=10
-                        ) for room in CLIENT_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=209,
-                    name='Radiologist Consultation',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.AFTER,
-                            option_type=ActivityConditionOptionType.TIME,
-                            args=dict(activity_id=209, time_after=timedelta(hours=13), generate=True)
-                        ),
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.AFTER,
-                            option_type=ActivityConditionOptionType.ACTIVITY,
-                            args=dict(activity_id=209, other_activity_id=205, generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=25
-                        ) for room in RADIOLOGY_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=210,
-                    name='Final Consultation',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.IN_FIXED_ORDER_AS,
-                            option_type=ActivityConditionOptionType.ORDER,
-                            args=dict(activity_id=210, order=9, generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=30
-                        ) for room in CONSULTATION_ROOMS
-                    ]
-                ),
-                Activity(
-                    id=211,
-                    name='Checkout',
-                    conditions=[
-                        Condition(
-                            scope=ConditionScope.ACTIVITY,
-                            option=ActivityConditionOption.IN_FIXED_ORDER_AS,
-                            option_type=ActivityConditionOptionType.ORDER,
-                            args=dict(activity_id=211, order=10, generate=True)
-                        )
-                    ],
-                    rooms=[
-                        ActivityRoom(
-                            room=room,
-                            duration=10
-                        ) for room in CLIENT_ROOMS
-                    ]
-                ),
-            ],
-            quantity=NUM_OPT_CLIENTS
-        )
-    ]
-    
-    print(solver.generate())

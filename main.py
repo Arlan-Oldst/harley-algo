@@ -6,9 +6,9 @@ Assumptions:
  - The SQS message only contains the ScenarioAction ID
 """
 from src.controllers.controller import Controller
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
-import json
+import traceback
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +18,13 @@ def get_healthcheck():
     return 'OK', 200
 
 @app.route('/', methods=['GET'])
-def get_schedule(event):
-    event = json.loads(event)
-    return Controller.retrieve_generated_scenario(**event), 200
+def get_schedule():
+    try:
+        event = request.get_json()
+        return Controller.retrieve_generated_scenario(**event), 200
+    except Exception:
+        print(traceback.format_exc())
+        return 'Internal Server Error', 500
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0')
