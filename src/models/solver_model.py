@@ -3,6 +3,10 @@ from dataclasses import dataclass, field
 from typing import List
 from datetime import timedelta
 
+class SolverMode(Enum):
+    MAKESPAN = 'MAKESPAN'
+    GAPS = 'GAPS'
+
 class ClientType(Enum):
     ELITE = 'ELITE'
     ULTIMATE = 'ULTIMATE'

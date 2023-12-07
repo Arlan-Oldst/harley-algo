@@ -47,6 +47,7 @@ class Solver:
         self.__room_conditions = None
         self.__schedules = []
         
+        self.gaps = []
         self.floors = dict()
         self.rooms = dict()
         self.orders = dict()
@@ -69,14 +70,17 @@ class Solver:
         self.transfer_precedences = dict()
         self.transfer_floors = dict()
     
-    def __define_objective(self):
+    def __define_objective(self, mode: sm.SolverMode = sm.SolverMode.GAPS.value):
         """Helper function for defining the objective of the solver
         """
         assert len(self.ends_per_client) > 0, 'Invalid number of last activity end times'
         
-        makespan = self.model.NewIntVar(0, self.__horizon, 'makespan')
-        self.model.AddMaxEquality(makespan, self.ends_per_client)
-        self.model.Minimize(makespan)
+        if mode == sm.SolverMode.MAKESPAN.value:
+            makespan = self.model.NewIntVar(0, self.__horizon, 'makespan')
+            self.model.AddMaxEquality(makespan, self.ends_per_client)
+            self.model.Minimize(makespan)
+        elif mode == sm.SolverMode.GAPS.value:
+            self.model.Minimize(sum(self.gaps))
     
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
@@ -320,11 +324,26 @@ class Solver:
                     self.model.Add(transfer_start == self.ends[(client_id, activity_id)]).OnlyEnforceIf(transfer_floor, consecutive_activities)
                     self.model.Add(transfer_end == self.starts[(client_id, other_activity_id)]).OnlyEnforceIf(transfer_floor, consecutive_activities)
                     
-                    self.model.Add(self.starts[(client_id, other_activity_id)] >= self.ends[(client_id, activity_id)]).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
-                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
+                    self.model.Add(self.starts[(client_id, other_activity_id)] == self.ends[(client_id, activity_id)]).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
+                    # self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
                     
                     self.model.AddModuloEquality(0, transfer_start, self.__time_max_interval)
                     self.model.AddModuloEquality(0, transfer_end, self.__time_max_interval)
+                    
+                    # For getting the number of gaps
+                    consecutive_orders = self.model.NewBoolVar(f'{other_activity_id} order is after {activity_id} order')
+                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(consecutive_orders)
+                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] > self.__time_max_gap).OnlyEnforceIf(consecutive_orders.Not())
+                    
+                    zero_time_difference = self.model.NewBoolVar(f'difference of {other_activity_id} and {activity_id} is equal to zero')
+                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] != 0).OnlyEnforceIf(zero_time_difference)
+                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] == 0).OnlyEnforceIf(zero_time_difference.Not())
+                    
+                    existing_gap = self.model.NewBoolVar(f'gap between {other_activity_id} and {activity_id} exists')
+                    self.model.Add(existing_gap == 1).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference)
+                    self.model.Add(existing_gap == 0).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference.Not())
+                    
+                    self.gaps.append(existing_gap)
                     
                     self.transfer_starts[(client_id, activity_index, other_activity_index)] = transfer_start
                     self.transfer_ends[(client_id, activity_index, other_activity_index)] = transfer_end
@@ -406,8 +425,8 @@ class Solver:
                             self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
                         elif condition_criteria_type == m.CriteriaTypes.ORDER.value:
                             self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                        # else:
-                        #     raise ValueError('Invalid condition option type for between constraint')
+                        else:
+                            raise ValueError('Invalid condition option type for between constraint')
                     elif condition_type == m.ConditionTypes.WITHIN.value:
                         self.__apply_within_after_activity_constraint(client_id, condition_activity_id, 'Check-in, Consent & Change', condition_criteria_value)
                     elif condition_type == m.ConditionTypes.IN_FIXED_ORDER_AS.value:
