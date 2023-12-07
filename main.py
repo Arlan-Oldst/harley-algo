@@ -23,8 +23,9 @@ def get_schedule():
         event = request.get_json()
         return Controller.retrieve_generated_scenario(**event), 200
     except Exception:
-        print(traceback.format_exc())
-        return 'Internal Server Error', 500
+        error = traceback.format_exc()
+        print(error)
+        return error, 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')

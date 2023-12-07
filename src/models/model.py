@@ -124,6 +124,7 @@ class GeneralCondition:
 class Assessment:
     assessment_id: str
     assessment_name: str
+    assessment_color: str
     enabled: bool = False
     deleted: bool = False
     data: dict = field(default_factory=dict)

@@ -24,7 +24,9 @@ class Solver:
     """A class for solving the scheduling problem of the assessments.
     
     Assumptions:
-    - The data received is already structured and validated
+    - The first and last activities are not known unless explicitly specified
+    - Each assessment has their own activity and room conditions
+    - Each assessment can have varying number of activities
     """
         
     def __init__(self, time_start: timedelta, time_end: timedelta, time_max_interval: timedelta, time_max_gap: timedelta, time_transfer: timedelta, num_floors: int, num_doctors: int, simultaneous_transfers: bool) -> None:
@@ -263,7 +265,7 @@ class Solver:
         
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_transfer_constraint(client_id, schedule)
-            self.__apply_max_gap_constraint(client_id, schedule)
+            # self.__apply_max_gap_constraint(client_id, schedule)
             self.__apply_no_overlap_client_constraint(client_id)
             self.__apply_no_gap_between_indices_constraint(client_id, 0, 1)
             
@@ -339,7 +341,7 @@ class Solver:
         for activity_index, _ in enumerate(schedule):
             other_activity_index = activity_index + 1
             if other_activity_index < len(schedule):
-                self.__model.Add(self.__activity_index_start_time_int_vars[(client_id, other_activity_index)] - self.__activity_index_end_time_int_vars[(client_id, activity_index)] <= self.__time_max_gap).OnlyEnforceIf(self.__room_floor_bool_vars[(client_id, activity_index, other_activity_index)].Not())
+                self.__model.Add(self.__activity_index_start_time_int_vars[(client_id, other_activity_index)] - self.__activity_index_end_time_int_vars[(client_id, activity_index)] == 0).OnlyEnforceIf(self.__room_floor_bool_vars[(client_id, activity_index, other_activity_index)].Not())
     
     def __apply_transfer_constraint(self, client_id: int, schedule: List[List[Any]]):
         """Helper function for applying the transfer constraint of the solver.
@@ -364,6 +366,8 @@ class Solver:
                 
                 self.__model.Add(start == self.__activity_index_end_time_int_vars[(client_id, activity_index)]).OnlyEnforceIf(floor)
                 self.__model.Add(self.__activity_index_start_time_int_vars[(client_id, other_activity_index)] == end).OnlyEnforceIf(floor)
+                
+                self.__model.Add(self.__activity_index_end_time_int_vars[(client_id, activity_index)] == self.__activity_index_start_time_int_vars[(client_id, other_activity_index)]).OnlyEnforceIf(floor.Not())
                 
                 self.__time_interval_vars_per_client[client_id].append(interval)
                 self.__transfer_start_time_int_vars[(client_id, activity_index, other_activity_index)] = start

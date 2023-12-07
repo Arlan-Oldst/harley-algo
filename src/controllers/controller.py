@@ -8,7 +8,7 @@ Functions:
 """
 from src.utils.serializer import serialize_as_dataclass, serialize_scenario_action_as_solver_args, serialize_assessments, serialize_rooms
 from src.models.model import ScenarioAction
-from src.utils.solver import Solver
+from src.utils.solver_v2 import Solver
 import json
 
 class Controller:
@@ -17,15 +17,16 @@ class Controller:
         """Retrieve the generated scenario by the scheduler module."""
         # TODO: retrieve scenario action from database
         
-        scenario_action: ScenarioAction = serialize_as_dataclass(ScenarioAction, **kwargs.get('scenarioAction'))
-                
-        solver_args = serialize_scenario_action_as_solver_args(scenario_action)
-        solver = Solver(**solver_args)
+        solver = Solver()
+        solver.scenario_action = kwargs.get('scenario_action')
+        solver.resources = kwargs.get('resources')
+        solver.assessments = kwargs.get('assessments')
+        solver.activities = kwargs.get('activities')
         
         # TODO: set assessments attribute of Solver
-        assessments = kwargs.get('assessments')
-        r = serialize_rooms(kwargs.get('rooms'))
-        solver.assessments = serialize_assessments(scenario_action.data, r, assessments)
+        # assessments = kwargs.get('assessments')
+        # r = serialize_rooms(kwargs.get('rooms'))
+        # solver.assessments = serialize_assessments(scenario_action.data, r, assessments)
         
         # TODO: generate scenario
         generated_scenario = solver.generate()
