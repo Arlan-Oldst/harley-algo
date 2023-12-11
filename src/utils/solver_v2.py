@@ -106,6 +106,10 @@ class Solver:
                 for activity in activities:
                     if 'MRI' in activity['id']:
                         activity['id'] = 'MRI'
+                    elif 'Elite' in activity['id']:
+                        activity['id'] = activity['id'].replace('Elite', '').strip()
+                    elif 'Ultimate' in activity['id']:
+                        activity['id'] = activity['id'].replace('Ultimate', '').strip()
                     room_type = activity['room_type']
                     if not room_type:
                         room_type = activity['resource_type']
@@ -815,7 +819,7 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 5))).total_seconds()
         
         start_time = datetime.now()
         self.__status = self.__solver.Solve(self.model)        
