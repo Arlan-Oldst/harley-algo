@@ -1,7 +1,7 @@
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List
-from datetime import timedelta
+from datetime import datetime
 
 class ClientType(Enum):
     ELITE = 'ELITE'
@@ -29,11 +29,11 @@ class ResourceRoomTypes(Enum):
     ULTRASOUND_ROOM = 'ULTRASOUND_ROOM'
     MRI_15T_ROOM = 'MRI_1.5T_ROOM'
     MRI_3T_ROOM = 'MRI_3T_ROOM'
-    CARDIAC_ROOM = 'CARDIAC_ROOM',
-    DOCTOR_ROOM = 'DOCTOR_ROOM',
-    EYES_AND_EARS_ROOM = 'EYES_AND_EARS_ROOM',
-    PHLEBOTOMY_ROOM = 'PHLEBOTOMY_ROOM',
-    RADIOLOGY_ROOM = 'RADIOLOGY_ROOM',
+    CARDIAC_ROOM = 'CARDIAC_ROOM'
+    DOCTOR_ROOM = 'DOCTOR_ROOM'
+    EYES_AND_EARS_ROOM = 'EYES_AND_EARS_ROOM'
+    PHLEBOTOMY_ROOM = 'PHLEBOTOMY_ROOM'
+    RADIOLOGY_ROOM = 'RADIOLOGY_ROOM'
     PURE_SPORTS_ROOM = 'PURE_SPORTS_ROOM'
 
 class ResourceLocations(Enum):
@@ -55,14 +55,19 @@ class CriteriaTypes(Enum):
     ORDER = 'ORDER'
 
 @dataclass
-class Resource:
+class Base:
+    created: datetime
+    updated: datetime
+    deleted: bool
+    
+@dataclass
+class Resource(Base):
     resource_id: str
     resource_name: str
     type: ResourceTypes
     room_type: ResourceRoomTypes
     location: int
     available: bool = True
-    deleted: bool = False
     data: dict = field(default_factory=dict)
 
 @dataclass
@@ -72,7 +77,7 @@ class TimeAllocation:
     default_time: int | None = None
 
 @dataclass
-class Activity:
+class Activity(Base):
     activity_id: str
     room_type: str
     resource_type: ResourceTypes
@@ -80,7 +85,6 @@ class Activity:
     activity_color: str
     is_gender_time_allocated: bool = False
     enabled: bool = True
-    deleted: bool = False
     time_allocations: TimeAllocation = field(default_factory=TimeAllocation)
     mandatory_conditions_count: int = 0
     optional_conditions_count: int = 0
@@ -98,44 +102,38 @@ class Criteria:
     value: str
 
 @dataclass
-class Condition:
+class Condition(Base):
     condition_id: str
-    condition_title: str
     activity_id: str
     assessment_id: str
     type: ConditionTypes
     enabled: bool = True
     generate: bool = False
     mandatory: bool = False
-    deleted: bool = False
     criteria: Criteria = field(default_factory=Criteria)
     data: dict = field(default_factory=dict)
 
 @dataclass
-class GeneralCondition:
+class GeneralCondition(Base):
     general_condition_id: str
     general_condition_title: str
     enabled: bool = True
     mandatory: bool = False
-    deleted: bool = False
     data: dict = field(default_factory=dict)
 
 @dataclass
-class Assessment:
+class Assessment(Base):
     assessment_id: str
     assessment_name: str
-    assessment_color: str
     enabled: bool = False
-    deleted: bool = False
     data: dict = field(default_factory=dict)
 
 @dataclass
-class AssessmentActivity:
+class AssessmentActivity(Base):
     assessment_activity_id: str
     assessment_id: str
     activity_id: str
     enabled: bool = False
-    deleted: bool = False
     data: dict = field(default_factory=dict)
 
 @dataclass
@@ -162,7 +160,6 @@ class ScenarioActionData:
 
 @dataclass
 class ScenarioAction:
-    scenario_action_id: str
     first_client_arrival_time: str
     max_gap: int = 10
     total_male: int | None = None
@@ -172,18 +169,31 @@ class ScenarioAction:
     data: ScenarioActionData = field(default_factory=ScenarioActionData)
 
 @dataclass
-class GeneratedScenarioData:
+class ScenarioActivity(Activity):
+    condition: List[Condition] = field(default_factory=list)
+    movable: bool = False
+    assignedRoom: Resource = field(default_factory=Resource)
+    assignedTime: int = 0
+
+@dataclass
+class TransferActivity:
+    activity_name: str
+    time_allocations: TimeAllocation = field(default_factory=TimeAllocation)
+    movable: bool | None = None
+    assigned_time: int | None = None
+    conditions: List[Condition] = field(default_factory=list)
+
+@dataclass
+class ClientScenario:
     client_number: int
     client_type: ClientType
     type: ClientMaritalType
     sex: ClientSex
-    couple_index: int
-    couple_client_number: int
-    activities: List[Activity]
-
-@dataclass
-class GeneratedScenario:
-    data: List[GeneratedScenarioData]
+    single_client_no: int
+    couple_client_no: int
+    activities: List[ScenarioActivity | TransferActivity] = field(default_factory=list)
+    client_room: Resource = field(default_factory=Resource)
+    start_time: str | None = None
 
 ENUMS = set((
     ClientType,
@@ -210,6 +220,6 @@ MODELS = set((
     ClientUltimate,
     ScenarioActionData,
     ScenarioAction,
-    GeneratedScenarioData,
-    GeneratedScenario,
+    ClientScenario,
+    ScenarioActivity,
 ))

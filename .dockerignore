@@ -4,6 +4,5 @@
 .git/
 .gitignore
 *.ts
-event.json
-event_v2.json
+*.json
 harley_google_or_tools_research.py

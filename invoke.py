@@ -2,6 +2,7 @@ from src.controllers.controller import Controller
 import json
 
 if __name__ == '__main__':
-    with open('event_v2.json', 'r') as f:
+    with open('event_v3.json', 'r') as f:
         event = json.load(f)
-        print(Controller.retrieve_generated_scenario(**event))
+        authorization = 'Bearer eyJraWQiOiI5U3FPY3NGS25cL1pYalFaU1l5YjRKZnNjT2UyUkIxSlY1ak5nTjJCazZWVT0iLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJiNDI1ZmQwZi1lNWFkLTQzYjYtYmQyMy1hMDBlMmE4OTkxYjEiLCJpc3MiOiJodHRwczpcL1wvY29nbml0by1pZHAuZXUtd2VzdC0yLmFtYXpvbmF3cy5jb21cL2V1LXdlc3QtMl9YTWp1N2RYQnYiLCJjbGllbnRfaWQiOiI3djYwN2o3aWY0cXM5NzVnOGQ3OWFpbjdkZCIsIm9yaWdpbl9qdGkiOiJhMGYxMzI3OC03ZDllLTQyM2QtYWVhZS1jOWI5ZDM3ZWVkNjciLCJldmVudF9pZCI6IjdiNzE5ZDUxLWQwYzQtNDZlNC1hYWQ3LTY3ZTI5ODEzOGVkYSIsInRva2VuX3VzZSI6ImFjY2VzcyIsInNjb3BlIjoiYXdzLmNvZ25pdG8uc2lnbmluLnVzZXIuYWRtaW4iLCJhdXRoX3RpbWUiOjE3MDI0NzQ2OTEsImV4cCI6MTcwMjQ3ODI5MSwiaWF0IjoxNzAyNDc0NjkxLCJqdGkiOiJlZGRjN2MyYS1mYjMxLTRkMWUtOTJlNy05NTJjNWVmMDNhNWEiLCJ1c2VybmFtZSI6ImI0MjVmZDBmLWU1YWQtNDNiNi1iZDIzLWEwMGUyYTg5OTFiMSJ9.frfHe4OT1jrKG0686kdBxV7-DDkERTgzQJ-4mWvnThEu5y9LnyifIR_W6VUMkI4ha-pPYu2qA-Q4pH7OsugEIKKDVHbovzVSMJEWXr6KPsLgpP28UjowPxhcPvQAlQTKJJgySp97cLrKpN5AmZm-Q5-n48VV-9V_p2S1HzmUsnmHhPRHbcq9V-LGccyKXOvbvbckqCTEPFBIneJMLULpqP44f88W9XURtdDS_TYOt_DVvXLJ-y1oiHjuF5vPFzAioUL3N2MgGZioHN0Hekwf9eMej7dji62txiixUXqqR-cLe60ZNZjYDH_OkCpeoz5zTqksUITu6dRJbRxfznUs4Q'
+        print(Controller.retrieve_generated_scenario(authorization, **event))

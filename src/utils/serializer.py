@@ -9,6 +9,7 @@ from src.models import model as m
 from src.models import solver_model as sm
 from dataclasses import fields as fs
 from datetime import timedelta, datetime
+from dateutil.parser import parse
 import re
 
 def serialize_as_dataclass(o: object, **kwargs) -> object:
@@ -23,7 +24,7 @@ def serialize_as_dataclass(o: object, **kwargs) -> object:
             continue
         
         attribute = kwargs.get(field, None)
-        
+
         if attribute is None:
             continue
         
@@ -43,6 +44,8 @@ def serialize_as_dataclass(o: object, **kwargs) -> object:
             attribute = [serialize_as_dataclass(_type, **a) for a in attribute]
         elif field_type in m.MODELS or field_type in sm.MODELS:
             attribute = serialize_as_dataclass(field_type, **attribute)
+        elif field_type is datetime:
+            attribute = parse(attribute)
         else:
             attribute = field_type(attribute)
             

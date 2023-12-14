@@ -17,11 +17,15 @@ CORS(app)
 def get_healthcheck():
     return 'OK', 200
 
-@app.route('/', methods=['GET'])
+@app.route('/', methods=['POST'])
 def get_schedule():
     try:
+        authorization = request.headers.get('Authorization', None)
+        if authorization is None:
+            raise Exception('Authorization header is missing.')
+        
         event = request.get_json()
-        return Controller.retrieve_generated_scenario(**event), 200
+        return Controller.retrieve_generated_scenario(authorization, **event), 200
     except Exception:
         error = traceback.format_exc()
         print(error)

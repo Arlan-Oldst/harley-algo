@@ -85,42 +85,43 @@ class Solver:
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
         """
-        for assessment in self.assessments:
-            num_clients = sum(getattr(self.scenario_action.data, f'client_{assessment.assessment_name.lower()}').__dict__.values())
+        for index in range(0, len(self.assessments)):
+            num_male_clients = getattr(self.scenario_action.data, f'client_{self.assessments[index].assessment_name.lower()}').single_male
+            num_female_clients = getattr(self.scenario_action.data, f'client_{self.assessments[index].assessment_name.lower()}').single_female
             
+            num_clients = num_male_clients + num_female_clients
+
             if not num_clients:
+                self.assessments[index].enabled = False
                 continue
             
-            activity_ids = assessment.data['activities']
+            activities = self.assessments[index].data['activities']
             # TODO: Get duration according to gender if is_gender_time_allocated. Uses default for now
             # TODO: Activity ID for now is the activity name
             schedule = []
-            for activity_id in activity_ids:
+            _activities: List[m.Activity]
+            for _activities in activities:
                 activity_rooms = []
                 
-                if isinstance(activity_id, list):
-                    activities = [activity for aid in activity_id for activity in self.__activities_map[(aid, 'default_time')]]
-                else:
-                    activities = self.__activities_map[(activity_id, 'default_time')]
-                
-                for activity in activities:
-                    if 'MRI' in activity['id']:
-                        activity['id'] = 'MRI'
-                    elif 'Elite' in activity['id']:
-                        activity['id'] = activity['id'].replace('Elite', '').strip()
-                    elif 'Ultimate' in activity['id']:
-                        activity['id'] = activity['id'].replace('Ultimate', '').strip()
-                    room_type = activity['room_type']
-                    if not room_type:
-                        room_type = activity['resource_type']
+                activity: m.Activity
+                for activity in _activities:
+                    
+                    room_type = activity.room_type if activity.resource_type == m.ResourceTypes.OTHER else m.ResourceTypes.CLIENT.value
                     rooms = self.__rooms_map[room_type]
+                    room: m.Resource
                     for room in rooms:
-                        activity_rooms.append(self.__activity_type(activity['duration'], activity['id'], room.resource_id, room.location))
+                        duration = activity.time_allocations.default_time
+                        
+                        if activity.is_gender_time_allocated:
+                            # TODO: support gender time allocated
+                            pass
+                        
+                        activity_rooms.append(self.__activity_type(duration, activity.activity_id, room.resource_id, room.location))
                         
                         self.__num_floors = max(self.__num_floors, room.location)
-                    
+                        
                 schedule.append(activity_rooms)
-                
+                    
             self.__schedules.extend([schedule] * num_clients)
     
     def __define_variables(self):
@@ -135,6 +136,7 @@ class Solver:
             
             for i, activities in enumerate(schedule):
                 activity = activities[0]
+                                
                 min_duration = activities[0].duration
                 max_duration = activities[0].duration
                 
@@ -243,6 +245,7 @@ class Solver:
                 self.__apply_maximum_capacity_constraint(room_id, 'First Consultation', 3)
         
         self.__apply_transfer_constraint()
+        self.__apply_maximum_time_constraint()
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
         self.__apply_no_overlap_activity_constraint('Check-in, Consent & Change')
         self.__apply_gap_between_activity_constraint('MRI')
@@ -359,6 +362,13 @@ class Solver:
                     
             self.model.AddCircuit(arcs)
     
+    def __apply_maximum_time_constraint(self, generate: bool = True):
+        """Helper function for applying the maximum time constraint of the solver.
+        """
+        if generate:
+            for end in self.ends_per_client:
+                self.model.Add(end <= self.__horizon)
+    
     def __apply_activity_constraints(self):
         """Helper function for applying all activity constraints of the solver namely:
 
@@ -372,74 +382,89 @@ class Solver:
         """
         start_time = datetime.now()
         
+        start_activity_id = self.__activities_names_map['Check-in, Consent & Change'][0].activity_id
         for assessment in self.assessments:
+            if not assessment.enabled:
+                continue
+            
+            condition: m.Condition
             for condition in assessment.data['activity_conditions']:
-                condition_type = condition['type']
-                condition_activity_id = condition['activity_id']
-                condition_criteria_value = condition['criteria']['value']
-                condition_criteria_between_values_start = condition['criteria']['between_values']['start']
-                condition_criteria_between_values_end = condition['criteria']['between_values']['end']
-                condition_criteria_type = condition['criteria']['criteria_type']
+                if condition.deleted:
+                    continue
                 
-                if condition_criteria_type == m.CriteriaTypes.TIME.value and condition_type != m.ConditionTypes.BETWEEN.value:
-                    time_value = datetime.strptime(condition_criteria_value, "%H:%M:%S")
-                    condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
-                elif condition_criteria_type == m.CriteriaTypes.ORDER.value and condition_type != m.ConditionTypes.BETWEEN.value:
+                if not condition.mandatory:
+                    continue
+                
+                condition_type = condition.type
+                condition_activity_id = condition.activity_id
+                condition_criteria_value = condition.criteria.value
+                condition_criteria_between_values_start = condition.criteria.between_values.start
+                condition_criteria_between_values_end = condition.criteria.between_values.end
+                condition_criteria_type = condition.criteria.criteria_type
+                
+                if condition_criteria_type == m.CriteriaTypes.TIME and condition_type != m.ConditionTypes.BETWEEN:
+                    if condition_type == m.ConditionTypes.WITHIN:
+                        condition_criteria_value = timedelta(minutes=int(condition_criteria_value))
+                    else:
+                        time_value = datetime.strptime(condition_criteria_value, "%H:%M")
+                        condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
+                elif condition_criteria_type == m.CriteriaTypes.ORDER and condition_type != m.ConditionTypes.BETWEEN:
                     condition_criteria_value = int(condition_criteria_value)
-                elif condition_criteria_type == m.CriteriaTypes.TIME.value and condition_type == m.ConditionTypes.BETWEEN.value:
-                    before_time_value = datetime.strptime(condition_criteria_between_values_start, "%H:%M:%S")
+                elif condition_criteria_type == m.CriteriaTypes.TIME and condition_type == m.ConditionTypes.BETWEEN:
+                    before_time_value = datetime.strptime(condition_criteria_between_values_start, "%H:%M")
                     condition_criteria_between_values_start = timedelta(hours=before_time_value.hour, minutes=before_time_value.minute, seconds=before_time_value.second)
-                    after_time_value = datetime.strptime(condition_criteria_between_values_end, "%H:%M:%S")
+                    after_time_value = datetime.strptime(condition_criteria_between_values_end, "%H:%M")
                     condition_criteria_between_values_end = timedelta(hours=after_time_value.hour, minutes=after_time_value.minute, seconds=after_time_value.second)
-                elif condition_criteria_type == m.CriteriaTypes.ORDER.value and condition_type == m.ConditionTypes.BETWEEN.value:
+                elif condition_criteria_type == m.CriteriaTypes.ORDER and condition_type == m.ConditionTypes.BETWEEN:
                     condition_criteria_between_values_start = int(condition_criteria_between_values_start)
                     condition_criteria_between_values_end = int(condition_criteria_between_values_end)
-                elif condition_type == m.ConditionTypes.WITHIN.value:
-                    time_value = datetime.strptime(condition_criteria_value, "%H:%M:%S")
+                elif condition_type == m.ConditionTypes.WITHIN:
+                    time_value = datetime.strptime(condition_criteria_value, "%H:%M")
                     condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
                 
                 for client_id, _ in enumerate(self.__schedules):
-                    if condition_type == m.ConditionTypes.BEFORE.value:
-                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY.value:
-                            self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        elif condition_criteria_type == m.CriteriaTypes.TIME.value:
-                            self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        elif condition_criteria_type == m.CriteriaTypes.ORDER.value:
-                            self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        else:
-                            raise ValueError('Invalid condition option type for before activity constraint')
-                    elif condition_type == m.ConditionTypes.AFTER.value:
-                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY.value:
-                            self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        elif condition_criteria_type == m.CriteriaTypes.TIME.value:
-                            self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        elif condition_criteria_type == m.CriteriaTypes.ORDER.value:
-                            self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        else:
-                            raise ValueError('Invalid condition option type for after activity constraint')
-                    elif condition_type == m.ConditionTypes.RIGHT_AFTER.value:
-                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY.value:
-                            self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        else:
-                            raise ValueError('Invalid condition option type for right after activity constraint')
-                    elif condition_type == m.ConditionTypes.BETWEEN.value:
-                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY.value:
-                            self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                        elif condition_criteria_type == m.CriteriaTypes.TIME.value:
-                            self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                        elif condition_criteria_type == m.CriteriaTypes.ORDER.value:
-                            self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                        else:
-                            raise ValueError('Invalid condition option type for between constraint')
-                    elif condition_type == m.ConditionTypes.WITHIN.value:
-                        self.__apply_within_after_activity_constraint(client_id, condition_activity_id, 'Check-in, Consent & Change', condition_criteria_value)
-                    elif condition_type == m.ConditionTypes.IN_FIXED_ORDER_AS.value:
-                        if condition_criteria_type == m.CriteriaTypes.ORDER.value:
+                    # if condition_type == m.ConditionTypes.BEFORE:
+                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                    #         self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
+                    #         self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                    #         self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     # else:
+                    #     #     raise ValueError('Invalid condition option type for before activity constraint')
+                    # elif condition_type == m.ConditionTypes.AFTER:
+                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                    #         self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
+                    #         self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                    #         self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     # else:
+                    #     #     raise ValueError('Invalid condition option type for after activity constraint')
+                    # elif condition_type == m.ConditionTypes.RIGHT_AFTER:
+                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                    #         self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                    #     # else:
+                    #     #     raise ValueError('Invalid condition option type for right after activity constraint')
+                    # elif condition_type == m.ConditionTypes.BETWEEN:
+                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                    #         self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
+                    #         self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                    #         self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                    #     # else:
+                    #     #     raise ValueError('Invalid condition option type for between constraint')
+                    # elif condition_type == m.ConditionTypes.WITHIN:
+                    #     other_activity_id = start_activity_id
+                    #     self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value)
+                    if condition_type == m.ConditionTypes.IN_FIXED_ORDER_AS:
+                        if condition_criteria_type == m.CriteriaTypes.ORDER:
                             self.__apply_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        else:
-                            raise ValueError('Invalid condition option type for in fixed order as constraint')
-                    else:
-                        raise ValueError('Invalid condition option')
+                        # else:
+                        #     raise ValueError('Invalid condition option type for in fixed order as constraint')
+                    # else:
+                    #     raise ValueError('Invalid condition option')
         
         end_time = datetime.now()
         print(f'Total Time for applying activity constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -680,19 +705,22 @@ class Solver:
     def scenario_action(self, _scenario_action: dict) -> None:
         """Setter attribute for the assessments
         """
-        _scenario_action_data = _scenario_action.pop('data')
-        self.__scenario_action = m.ScenarioAction(
-            **_scenario_action,
-            data=m.ScenarioActionData(
-                out_order_rooms=_scenario_action_data['out_of_order_rooms'],
-                client_elite=m.ClientElite(**_scenario_action_data['client_elite']),
-                client_ultimate=m.ClientUltimate(**_scenario_action_data['client_ultimate']),
+        if not isinstance(_scenario_action, m.ScenarioAction):
+            _scenario_action_data = _scenario_action.pop('data')
+            self.__scenario_action = m.ScenarioAction(
+                **_scenario_action,
+                data=m.ScenarioActionData(
+                    out_order_rooms=_scenario_action_data['out_of_order_rooms'],
+                    client_elite=m.ClientElite(**_scenario_action_data['client_elite']),
+                    client_ultimate=m.ClientUltimate(**_scenario_action_data['client_ultimate']),
+                )
             )
-        )
+        else:
+            self.__scenario_action = _scenario_action
         
-        first_client_arrival_time = datetime.strptime(self.__scenario_action.first_client_arrival_time,"%H:%M:%S")
+        first_client_arrival_time = datetime.strptime(self.__scenario_action.first_client_arrival_time,"%H:%M")
         self.__time_start = timedelta(hours=first_client_arrival_time.hour, minutes=first_client_arrival_time.minute, seconds=first_client_arrival_time.second)
-        self.__time_end = timedelta(hours=23)
+        self.__time_end = timedelta(hours=18)
         self.__time_max_interval = int(timedelta(minutes=5).total_seconds() // 60)
         self.__time_max_gap = int(timedelta(minutes=self.__scenario_action.max_gap).total_seconds() // 60)
         self.__time_transfer = int(timedelta(minutes=5).total_seconds() // 60)
@@ -703,59 +731,95 @@ class Solver:
     
     @property
     def resources(self) -> List[m.Resource]:
-        """Getter attribute for the assessments
+        """Getter attribute for the resources
         """
         return self.__resources
     
     @resources.setter
     def resources(self, _resources: List[dict]) -> None:
-        """Setter attribute for the assessments
+        """Setter attribute for the resources
         """
-        self.__resources = [
-            m.Resource(**resource)
-            for resource in _resources
-        ]
+        assert len(_resources), 'Invalid resources'
+        
+        if not isinstance(_resources[0], m.Resource):
+            self.__resources = [
+                m.Resource(**resource)
+                for resource in _resources
+            ]
+        else:
+            self.__resources = _resources
+            
         self.__rooms_map = collections.defaultdict(list)
         for resource in self.__resources:
-            if resource.type == m.ResourceTypes.CLIENT.value:
+            if resource.type == m.ResourceTypes.CLIENT:
                 resource.data['room'] = m.ResourceTypes.CLIENT.value
             else:
-                resource.data['room'] = resource.room_type
+                resource.data['room'] = resource.room_type.value
             self.__rooms_map[resource.data['room']].append(resource)
         
     @property
     def activities(self) -> List[m.Activity]:
-        """Getter attribute for the assessments
+        """Getter attribute for the activities
         """
         return self.__activities
     
     @activities.setter
     def activities(self, _activities: List[dict]) -> None:
-        """Setter attribute for the assessments
+        """Setter attribute for the activities
         """
-        _time_allocations = [
-            activity.pop('time_allocations')
-            for activity in _activities
-        ]
-        self.__activities = [
-            m.Activity(
-                **activity,
-                time_allocations=m.TimeAllocation(
-                    **time_allocations
-                )
-            )
-            for activity, time_allocations in zip(_activities, _time_allocations)
-        ]
-        self.__activities_map = collections.defaultdict(list)
-        for activity in self.__activities:
-            for time_allocation in activity.time_allocations.__dict__:
-                self.__activities_map[(activity.activity_id, time_allocation)].append({
-                    'id': activity.activity_id,
-                    'room_type': activity.room_type,
-                    'resource_type': activity.resource_type,
-                    'duration': getattr(activity.time_allocations, time_allocation)
-                })
+        assert len(_activities), 'Invalid activities'
         
+        if not isinstance(_activities[0], m.Activity):
+            _time_allocations = [
+                activity.pop('time_allocations')
+                for activity in _activities
+            ]
+            self.__activities = [
+                m.Activity(
+                    **activity,
+                    time_allocations=m.TimeAllocation(
+                        **time_allocations
+                    )
+                )
+                for activity, time_allocations in zip(_activities, _time_allocations)
+            ]
+            
+            self.__activities_names_map = collections.defaultdict(list)
+            for activity in self.__activities:
+                for time_allocation in activity.time_allocations.__dict__:
+                    self.__activities_names_map[(activity.activity_id, time_allocation)].append({
+                        'id': activity.activity_id,
+                        'room_type': activity.room_type,
+                        'resource_type': activity.resource_type,
+                        'duration': getattr(activity.time_allocations, time_allocation)
+                    })
+        else:
+            self.__activities = _activities
+    
+    @property
+    def activities_names_map(self) -> List[m.Activity]:
+        """Getter attribute for the activities map
+        """
+        return self.__activities_names_map
+    
+    @activities_names_map.setter
+    def activities_names_map(self, _activities_map: Dict[str, list]) -> None:
+        """Setter attribute for the activities map
+        """
+        self.__activities_names_map = _activities_map
+        
+    @property
+    def activities_ids_map(self) -> List[m.Activity]:
+        """Getter attribute for the activities map
+        """
+        return self.__activities_ids_map
+    
+    @activities_ids_map.setter
+    def activities_ids_map(self, _activities_map: Dict[str, list]) -> None:
+        """Setter attribute for the activities map
+        """
+        self.__activities_ids_map = _activities_map
+    
     @property
     def assessments(self) -> List[m.Assessment]:
         """Getter attribute for the assessments
@@ -766,13 +830,18 @@ class Solver:
     def assessments(self, _assessments: List[dict]) -> None:
         """Setter attribute for the assessments
         """
-        # TODO: Modify sort to be based on priority
-        self.__assessments = [
-            m.Assessment(
-                **assessment
-            )
-            for assessment in _assessments
-        ]
+        assert len(_assessments), 'Invalid assessments'
+        
+        if not isinstance(_assessments[0], m.Assessment):
+            # TODO: Modify sort to be based on priority
+            self.__assessments = [
+                m.Assessment(
+                    **assessment
+                )
+                for assessment in _assessments
+            ]
+        else:
+            self.__assessments = _assessments
         
     @property
     def general_conditions(self) -> List[m.GeneralCondition]:
@@ -782,24 +851,29 @@ class Solver:
     
     @general_conditions.setter
     def general_conditions(self, _general_conditions: List[dict]) -> None:
-        """Setter attribute for the assessments
+        """Setter attribute for the general conditions
         """
-        self.__general_conditions = [
-            m.GeneralCondition(
-                **general_condition
-            )
-            for general_condition in _general_conditions
-        ]
+        assert len(_general_conditions), 'Invalid general conditions'
+        
+        if not isinstance(_general_conditions[0], m.GeneralCondition):
+            self.__general_conditions = [
+                m.GeneralCondition(
+                    **general_condition
+                )
+                for general_condition in _general_conditions
+            ]
+        else:
+            self.__general_conditions = _general_conditions
     
     @property
     def room_conditions(self) -> List[sm.Condition]:
-        """Getter attribute for the assessments
+        """Getter attribute for the room conditions
         """
         return self.__activities
     
     @room_conditions.setter
     def room_conditions(self, _room_conditions: List[dict]) -> None:
-        """Setter attribute for the assessments
+        """Setter attribute for the room conditions
         """
         self.__assessments = [
             sm.Condition(
@@ -813,8 +887,8 @@ class Solver:
         
         self.__initialize_variables()
         self.__define_variables()
-        self.__apply_general_constraints()
-        self.__apply_activity_constraints()
+        # self.__apply_general_constraints()
+        # self.__apply_activity_constraints()
         # self.__apply_room_constraints()
         self.__define_objective()
         
