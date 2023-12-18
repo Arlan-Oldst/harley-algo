@@ -17,7 +17,7 @@ CORS(app)
 def get_healthcheck():
     return 'OK', 200
 
-@app.route('/', methods=['POST'])
+@app.route('/generate-senario', methods=['POST'])
 def get_schedule():
     try:
         authorization = request.headers.get('Authorization', None)

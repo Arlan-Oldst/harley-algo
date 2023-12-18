@@ -69,6 +69,8 @@ class Solver:
         self.transfer_intervals = dict()
         self.transfer_precedences = dict()
         self.transfer_floors = dict()
+        
+        self.__clients_scenarios_map = dict()
     
     def __define_objective(self, mode: sm.SolverMode = sm.SolverMode.GAPS.value):
         """Helper function for defining the objective of the solver
@@ -90,6 +92,10 @@ class Solver:
             num_female_clients = getattr(self.scenario_action.data, f'client_{self.assessments[index].assessment_name.lower()}').single_female
             
             num_clients = num_male_clients + num_female_clients
+
+            self.assessments[index].data['num_clients'] = num_clients
+            self.assessments[index].data['num_female_clients'] = num_female_clients
+            self.assessments[index].data['num_male_clients'] = num_male_clients
 
             if not num_clients:
                 self.assessments[index].enabled = False
@@ -132,6 +138,20 @@ class Solver:
         
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
+            client_type = m.ClientType.ULTIMATE if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ELITE
+            assessment_index = 0 if client_type == m.ClientType.ULTIMATE else 1
+            client_sex = m.ClientSex.MALE if client_id < self.assessments[assessment_index].data['num_male_clients'] else m.ClientSex.FEMALE
+            client_scenario = m.ClientScenario(
+                client_id,
+                client_type,
+                m.ClientMaritalType.SINGLE,
+                client_sex,
+                client_id,
+                None,
+                start_time=self.scenario_action.first_client_arrival_time
+            )
+            self.__clients_scenarios_map[client_id] = client_scenario
+            
             previous_end = None
             
             for i, activities in enumerate(schedule):
@@ -223,32 +243,42 @@ class Solver:
         - Room conditions
         """
         start_time = datetime.now()
-        
+        check_in_id = self.activities_names_map['Check-in, Consent & Change'][0].activity_id
+        first_consult_id = self.activities_names_map['Consultation and Physical'][0].activity_id
+        final_consult_id = self.activities_names_map['Final Consult'][0].activity_id
+        mri_elite_15T_id = self.activities_names_map['MRI Elite'][0].activity_id
+        mri_ultimate_3T_id = self.activities_names_map['MRI ultimate'][0].activity_id[0]
+        mri_ultimate_15T_id = self.activities_names_map['MRI ultimate'][1].activity_id
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
-            self.__apply_same_room_for_activities_constraint(client_id, 'Check-in, Consent & Change', 'Lunch')
-            self.__apply_same_room_for_activities_constraint(client_id, 'Check-in, Consent & Change', 'Checkout')
+            
+            lunch_id = self.activities_names_map['Lunch'][0].activity_id
+            
+            self.__apply_same_room_for_activities_constraint(client_id, check_in_id, lunch_id)
+            
+            checkout_id = self.activities_names_map['Checkout'][0].activity_id
+            
+            self.__apply_same_room_for_activities_constraint(client_id, check_in_id, checkout_id)
+            
+            self.__apply_same_room_for_activities_constraint(client_id, first_consult_id, final_consult_id)
                 
         for room_id in self.intervals_per_room.keys():
             self.__apply_no_overlap_room_constraint(room_id)
             
-            key = ('Check-in, Consent & Change', room_id)
-            if key in self.rooms_per_activity:
-                self.__apply_unique_room_for_activity_constraint(room_id, 'Check-in, Consent & Change')
+            if check_in_id in self.rooms_per_activity:
+                self.__apply_unique_room_for_activity_constraint(room_id, check_in_id)
+            
+            if first_consult_id in self.rooms_per_activity:
+                self.__apply_maximum_capacity_constraint(room_id, first_consult_id, 3)
                 
-            key = ('First Consultation', room_id)
-            if key in self.rooms_per_activity:
-                self.__apply_maximum_capacity_constraint(room_id, 'First Consultation', 3)
-                
-            key = ('Final Consultation', room_id)
-            if key in self.rooms_per_activity:
-                self.__apply_maximum_capacity_constraint(room_id, 'First Consultation', 3)
+            if final_consult_id in self.rooms_per_activity:
+                self.__apply_maximum_capacity_constraint(room_id, final_consult_id, 3)
         
         self.__apply_transfer_constraint()
         self.__apply_maximum_time_constraint()
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
-        self.__apply_no_overlap_activity_constraint('Check-in, Consent & Change')
-        self.__apply_gap_between_activity_constraint('MRI')
+        self.__apply_no_overlap_activity_constraint(check_in_id)
+        self.__apply_gap_between_activity_constraint(mri_elite_15T_id, mri_ultimate_15T_id, mri_ultimate_3T_id)
         
         end_time = datetime.now()
         print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -268,21 +298,25 @@ class Solver:
         """
         self.model.AddNoOverlap(self.intervals_per_room[room_id])
     
-    def __apply_gap_between_activity_constraint(self, activity_id: int):
+    def __apply_gap_between_activity_constraint(self, *activity_ids):
         """Helper function for applying the gap between activities at specific room of the solver. Forces time max interval gaps between activities at specific room.
         """
-        for start in self.starts_per_activity[activity_id]:
-            for end in self.ends_per_activity[activity_id]:
+        starts_per_activity = [start for activity_id in activity_ids for start in self.starts_per_activity[activity_id]]
+        
+        ends_per_activity = [end for activity_id in activity_ids for end in self.ends_per_activity[activity_id]]
+        
+        for start in starts_per_activity:
+            for end in ends_per_activity:
                 self.model.Add(start != end)
                 
-            for other_start in self.starts_per_activity[activity_id]:
+            for other_start in starts_per_activity:
                 if start == other_start:
                     continue
                 
                 self.model.Add(start != other_start)
                 
-        for end in self.ends_per_activity[activity_id]:
-            for other_end in self.ends_per_activity[activity_id]:
+        for end in ends_per_activity:
+            for other_end in ends_per_activity:
                 if end == other_end:
                     continue
                 
@@ -383,6 +417,8 @@ class Solver:
         start_time = datetime.now()
         
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'][0].activity_id
+        
+        previous_num_clients = 0
         for assessment in self.assessments:
             if not assessment.enabled:
                 continue
@@ -422,50 +458,52 @@ class Solver:
                     time_value = datetime.strptime(condition_criteria_value, "%H:%M")
                     condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
                 
-                for client_id, _ in enumerate(self.__schedules):
-                    # if condition_type == m.ConditionTypes.BEFORE:
-                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
-                    #         self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
-                    #         self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
-                    #         self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     # else:
-                    #     #     raise ValueError('Invalid condition option type for before activity constraint')
-                    # elif condition_type == m.ConditionTypes.AFTER:
-                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
-                    #         self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
-                    #         self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
-                    #         self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     # else:
-                    #     #     raise ValueError('Invalid condition option type for after activity constraint')
-                    # elif condition_type == m.ConditionTypes.RIGHT_AFTER:
-                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
-                    #         self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
-                    #     # else:
-                    #     #     raise ValueError('Invalid condition option type for right after activity constraint')
-                    # elif condition_type == m.ConditionTypes.BETWEEN:
-                    #     if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
-                    #         self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                    #     elif condition_criteria_type == m.CriteriaTypes.TIME:
-                    #         self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                    #     elif condition_criteria_type == m.CriteriaTypes.ORDER:
-                    #         self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                    #     # else:
-                    #     #     raise ValueError('Invalid condition option type for between constraint')
-                    # elif condition_type == m.ConditionTypes.WITHIN:
-                    #     other_activity_id = start_activity_id
-                    #     self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value)
-                    if condition_type == m.ConditionTypes.IN_FIXED_ORDER_AS:
+                for client_id in range(previous_num_clients, previous_num_clients + assessment.data['num_clients']):                    
+                    if condition_type == m.ConditionTypes.BEFORE:
+                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                            self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        elif condition_criteria_type == m.CriteriaTypes.TIME:
+                            self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                            self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        else:
+                            raise ValueError('Invalid condition option type for before activity constraint')
+                    elif condition_type == m.ConditionTypes.AFTER:
+                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                            self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        elif condition_criteria_type == m.CriteriaTypes.TIME:
+                            self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                            self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        else:
+                            raise ValueError('Invalid condition option type for after activity constraint')
+                    elif condition_type == m.ConditionTypes.RIGHT_AFTER:
+                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                            self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                        else:
+                            raise ValueError('Invalid condition option type for right after activity constraint')
+                    elif condition_type == m.ConditionTypes.BETWEEN:
+                        if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                            self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                        elif condition_criteria_type == m.CriteriaTypes.TIME:
+                            self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                        elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                            self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                        # else:
+                        #     raise ValueError('Invalid condition option type for between constraint')
+                    elif condition_type == m.ConditionTypes.WITHIN:
+                        other_activity_id = start_activity_id
+                        self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value)
+                    elif condition_type == m.ConditionTypes.IN_FIXED_ORDER_AS:
                         if condition_criteria_type == m.CriteriaTypes.ORDER:
                             self.__apply_order_constraint(client_id, condition_activity_id, condition_criteria_value)
-                        # else:
-                        #     raise ValueError('Invalid condition option type for in fixed order as constraint')
-                    # else:
-                    #     raise ValueError('Invalid condition option')
-        
+                        else:
+                            raise ValueError('Invalid condition option type for in fixed order as constraint')
+                    else:
+                        raise ValueError('Invalid condition option')
+
+            previous_num_clients += assessment.data['num_clients']
+                
         end_time = datetime.now()
         print(f'Total Time for applying activity constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
         
@@ -503,8 +541,13 @@ class Solver:
             order (int): the order of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            self.model.Add(self.orders[(client_id, activity_id)] < order)
+        if not generate:
+            return
+        
+        if order < 0:
+            order += len(self.__schedules[client_id])
+        
+        self.model.Add(self.orders[(client_id, activity_id)] < order)
     
     def __apply_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be after another activity; start time of activity >= end time of another activity.
@@ -537,8 +580,13 @@ class Solver:
             order (int): the order of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            self.model.Add(self.orders[(client_id, activity_id)] > order)
+        if not generate:
+            return
+        
+        if order < 0:
+            order += len(self.__schedules[client_id])
+        
+        self.model.Add(self.orders[(client_id, activity_id)] > order)
     
     def __apply_right_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be right after another activity; start time of activity >= end time of another activity && start time of activity - end time of another activity <= time_max_gap.
@@ -592,9 +640,17 @@ class Solver:
             order_after (int): the order of the other activity after
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            self.model.Add(self.orders[(client_id, activity_id)] > order_after)
-            self.model.Add(self.orders[(client_id, activity_id)] < order_before)
+        if not generate:
+            return
+        
+        if order_after < 0:
+            order_after += len(self.__schedules[client_id])
+            
+        if order_before < 0:
+            order_before += len(self.__schedules[client_id])
+        
+        self.model.Add(self.orders[(client_id, activity_id)] > order_after)
+        self.model.Add(self.orders[(client_id, activity_id)] < order_before)
     
     def __apply_within_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, time_after: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must start within a certain time after another activity; start time of activity >= end time of another activity && start time of activity <= start time of another activity + time_after.
@@ -619,8 +675,13 @@ class Solver:
             order (int): the order of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            self.model.Add(self.orders[(client_id, activity_id)] == order)
+        if not generate:
+            return
+        
+        if order < 0:
+            order += len(self.__schedules[client_id])
+        
+        self.model.Add(self.orders[(client_id, activity_id)] == order)
     
     # def __apply_room_constraints(self):
     #     start_time = datetime.now()
@@ -750,12 +811,14 @@ class Solver:
             self.__resources = _resources
             
         self.__rooms_map = collections.defaultdict(list)
+        self.__ids_rooms_map = dict()
         for resource in self.__resources:
             if resource.type == m.ResourceTypes.CLIENT:
                 resource.data['room'] = m.ResourceTypes.CLIENT.value
             else:
                 resource.data['room'] = resource.room_type.value
             self.__rooms_map[resource.data['room']].append(resource)
+            self.__ids_rooms_map[resource.resource_id] = resource
         
     @property
     def activities(self) -> List[m.Activity]:
@@ -819,6 +882,18 @@ class Solver:
         """Setter attribute for the activities map
         """
         self.__activities_ids_map = _activities_map
+    
+    @property
+    def ids_activities_map(self) -> List[m.Activity]:
+        """Getter attribute for the activities map
+        """
+        return self.__ids_activities_map
+    
+    @ids_activities_map.setter
+    def ids_activities_map(self, _activities_map: Dict[str, list]) -> None:
+        """Setter attribute for the activities map
+        """
+        self.__ids_activities_map = _activities_map
     
     @property
     def assessments(self) -> List[m.Assessment]:
@@ -887,8 +962,8 @@ class Solver:
         
         self.__initialize_variables()
         self.__define_variables()
-        # self.__apply_general_constraints()
-        # self.__apply_activity_constraints()
+        self.__apply_general_constraints()
+        self.__apply_activity_constraints()
         # self.__apply_room_constraints()
         self.__define_objective()
         
@@ -907,26 +982,39 @@ class Solver:
             raise ValueError('Cannot generate schedule')
         
         self.__generated_schedules = []
+        self.__generated_scenarios = []
         
         for client_id, _ in enumerate(self.__schedules):
+            client_scenario: m.ClientScenario = self.__clients_scenarios_map[client_id]
             generated_schedule = []
             activities = [(key[1], self.__solver.Value(value)) for key, value in self.starts.items() if key[0] == client_id]
             activities.sort(key=lambda activity: activity[1])
             
             for activity_id, start in activities:
-                room = next((key[2] for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id and self.__solver.Value(value)))
+                room_id = next((key[2] for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id and self.__solver.Value(value)))
                 floor = self.floors[(client_id, activity_id)]
                 end = self.ends[(client_id, activity_id)]
                 generated_schedule.append([
                     activity_id,
-                    room,
+                    room_id,
                     self.__solver.Value(floor),
                     start,
                     self.__solver.Value(end),
                 ])
                 
+                activity = self.__ids_activities_map[activity_id]
+                room = self.__ids_rooms_map[room_id]
+                client_scenario.activities.append(m.ScenarioActivity(
+                    **activity.__dict__,
+                    movable=False,
+                    assigned_room=room,
+                    assigned_time=int(start // 5),
+                    conditions=[]
+                ))
+                
             for key, value in self.transfer_starts.items():
                 if self.__solver.Value(self.transfer_precedences[key]) and self.__solver.Value(self.transfer_floors[key]) and key[0] == client_id:
+                    transfer_start = self.__solver.Value(value)
                     generated_schedule.append([
                         'Transfer',
                         'None',
@@ -934,6 +1022,17 @@ class Solver:
                         self.__solver.Value(value),
                         self.__solver.Value(self.transfer_ends[key]),
                     ])
+                    client_scenario.activities.append(m.TransferActivity(
+                        activity_name='Transfer',
+                        time_allocations=m.TimeAllocation(default_time=5),
+                        movable=False,
+                        assigned_time=int(transfer_start // 5),
+                        conditions=[]
+                    ))
+            
+            client_scenario.activities.sort(key=lambda activity: activity.assigned_time)
+            self.__generated_scenarios.append(client_scenario.to_json())
             self.__generated_schedules.append(sorted(generated_schedule, key=lambda activity: activity[3]))
         
+        return self.__generated_scenarios
         return self.__generated_schedules

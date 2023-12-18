@@ -2,6 +2,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import List
 from datetime import datetime
+import re
 
 class ClientType(Enum):
     ELITE = 'ELITE'
@@ -54,8 +55,25 @@ class CriteriaTypes(Enum):
     TIME = 'TIME'
     ORDER = 'ORDER'
 
+class Record:
+    def to_json(self) -> dict:
+        return {
+            re.sub(r'\_(.)', lambda k: k.group(1).upper(), key): attribute.to_json()
+            if type(attribute) in MODELS
+            else [
+                subattribute.to_json()
+                for subattribute in attribute
+            ] if isinstance(attribute, list)
+            else attribute.value
+            if isinstance(attribute, Enum)
+            else attribute.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            if isinstance(attribute, datetime)
+            else attribute
+            for key, attribute in self.__dict__.items()
+        }
+
 @dataclass
-class Base:
+class Base(Record):
     created: datetime
     updated: datetime
     deleted: bool
@@ -71,7 +89,7 @@ class Resource(Base):
     data: dict = field(default_factory=dict)
 
 @dataclass
-class TimeAllocation:
+class TimeAllocation(Record):
     male: int | None = None
     female: int | None = None
     default_time: int | None = None
@@ -91,12 +109,12 @@ class Activity(Base):
     data: dict = field(default_factory=dict)
 
 @dataclass
-class BetweenValues:
+class BetweenValues(Record):
     start: str | None = None
     end: str | None = None
 
 @dataclass
-class Criteria:
+class Criteria(Record):
     criteria_type: CriteriaTypes
     between_values: BetweenValues
     value: str
@@ -137,7 +155,7 @@ class AssessmentActivity(Base):
     data: dict = field(default_factory=dict)
 
 @dataclass
-class ClientElite:
+class ClientElite(Record):
     single_male: int = 0
     single_female: int = 0
     couple_male_female: int = 0
@@ -145,7 +163,7 @@ class ClientElite:
     couple_female_female: int = 0
 
 @dataclass
-class ClientUltimate:
+class ClientUltimate(Record):
     single_male: int = 0
     single_female: int = 0
     couple_male_female: int = 0
@@ -153,13 +171,13 @@ class ClientUltimate:
     couple_female_female: int = 0
 
 @dataclass
-class ScenarioActionData:
+class ScenarioActionData(Record):
     out_order_rooms: List[str] = field(default_factory=list)
     client_elite: ClientElite = field(default_factory=ClientElite)
     client_ultimate: ClientUltimate = field(default_factory=ClientUltimate)
 
 @dataclass
-class ScenarioAction:
+class ScenarioAction(Record):
     first_client_arrival_time: str
     max_gap: int = 10
     total_male: int | None = None
@@ -170,13 +188,13 @@ class ScenarioAction:
 
 @dataclass
 class ScenarioActivity(Activity):
-    condition: List[Condition] = field(default_factory=list)
+    conditions: List[Condition] = field(default_factory=list)
     movable: bool = False
-    assignedRoom: Resource = field(default_factory=Resource)
-    assignedTime: int = 0
+    assigned_room: Resource = field(default_factory=Resource)
+    assigned_time: int = 0
 
 @dataclass
-class TransferActivity:
+class TransferActivity(Record):
     activity_name: str
     time_allocations: TimeAllocation = field(default_factory=TimeAllocation)
     movable: bool | None = None
@@ -184,7 +202,7 @@ class TransferActivity:
     conditions: List[Condition] = field(default_factory=list)
 
 @dataclass
-class ClientScenario:
+class ClientScenario(Record):
     client_number: int
     client_type: ClientType
     type: ClientMaritalType
@@ -192,7 +210,7 @@ class ClientScenario:
     single_client_no: int
     couple_client_no: int
     activities: List[ScenarioActivity | TransferActivity] = field(default_factory=list)
-    client_room: Resource = field(default_factory=Resource)
+    client_room: Resource | None = None
     start_time: str | None = None
 
 ENUMS = set((

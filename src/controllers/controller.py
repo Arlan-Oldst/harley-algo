@@ -22,8 +22,10 @@ class Controller:
         
         activities = retrieve_activities(authorization)
         activity_ids_map = dict()
+        ids_activities_map = dict()
         activity_names_map = collections.defaultdict(list)
         for activity in activities:
+            ids_activities_map[activity.activity_id] = activity
             activity_names_map[activity.activity_name].append(activity)
             activity_ids_map[activity.activity_id] = activity
         
@@ -55,9 +57,11 @@ class Controller:
         resources = retrieve_resources(authorization)
         
         solver = Solver()
+        solver.scenario_action = scenario_action
         solver.resources = resources
         solver.assessments = assessments
         solver.activities = activities
+        solver.ids_activities_map = ids_activities_map
         solver.activities_names_map = activity_names_map
         solver.scenario_action = scenario_action
         
