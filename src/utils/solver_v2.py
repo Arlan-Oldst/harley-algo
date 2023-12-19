@@ -5,6 +5,7 @@ from src.models import solver_model as sm, model as m
 from datetime import timedelta, datetime
 import collections
 import os
+import re
 
 class Solver:
     """A class for solving the scheduling problem of the assessments.
@@ -119,8 +120,13 @@ class Solver:
                     
                     room_type = activity.room_type if activity.resource_type == m.ResourceTypes.OTHER else m.ResourceTypes.CLIENT.value
                     rooms = self.__rooms_map[room_type]
+                    room_count = 0
+                    
                     room: m.Resource
                     for room in rooms:
+                        if room_count > self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM:
+                            break
+                        
                         duration = activity.time_allocations.default_time
                         
                         if activity.is_gender_time_allocated:
@@ -130,6 +136,8 @@ class Solver:
                         activity_rooms.append(self.__activity_type(duration, activity.activity_id, room.resource_id, room.location))
                         
                         self.__num_floors = max(self.__num_floors, room.location)
+                        
+                        room_count += 1
                         
                 schedule.append(activity_rooms)
                     
@@ -141,11 +149,15 @@ class Solver:
         assert len(self.__schedules) > 0, 'Invalid schedules'
         start_time = datetime.now()
         
+        start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
             client_type = m.ClientType.ULTIMATE if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ELITE
+            
             assessment_index = 0 if client_type == m.ClientType.ULTIMATE else 1
+            
             client_sex = m.ClientSex.MALE if client_id < self.assessments[assessment_index].data['num_male_clients'] else m.ClientSex.FEMALE
+            
             client_scenario = m.ClientScenario(
                 client_id,
                 client_type,
@@ -187,7 +199,7 @@ class Solver:
                 self.model.AddModuloEquality(0, end, self.__time_max_interval)
                                
                 previous_end = end
-                if i == 0:
+                if activity.id == start_activity_id:
                     if previous_start == None:
                         self.model.Add(start == 0)
                     else:
@@ -250,20 +262,20 @@ class Solver:
         - Room conditions
         """
         start_time = datetime.now()
-        check_in_id = self.activities_names_map['Check-in, Consent & Change'][0].activity_id
-        first_consult_id = self.activities_names_map['Consultation and Physical'][0].activity_id
-        final_consult_id = self.activities_names_map['Final Consult'][0].activity_id
-        mri_elite_15T_id = self.activities_names_map['MRI Elite'][0].activity_id
-        mri_ultimate_3T_id = self.activities_names_map['MRI ultimate'][0].activity_id[0]
-        mri_ultimate_15T_id = self.activities_names_map['MRI ultimate'][1].activity_id
+        check_in_id = self.activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
+        first_consult_id = self.activities_names_map['Consultation and Physical'.lower()][0].activity_id
+        final_consult_id = self.activities_names_map['Final Consult'.lower()][0].activity_id
+        mri_elite_15T_id = self.activities_names_map['MRI Elite'.lower()][0].activity_id
+        mri_ultimate_3T_id = self.activities_names_map['MRI Ultimate'.lower()][0].activity_id[0]
+        # mri_ultimate_15T_id = self.activities_names_map['MRI Ultimate'][1].activity_id
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
             
-            lunch_id = self.activities_names_map['Lunch'][0].activity_id
+            lunch_id = self.activities_names_map['Lunch'.lower()][0].activity_id
             
             self.__apply_same_room_for_activities_constraint(client_id, check_in_id, lunch_id)
             
-            checkout_id = self.activities_names_map['Checkout'][0].activity_id
+            checkout_id = self.activities_names_map['Checkout'.lower()][0].activity_id
             
             self.__apply_same_room_for_activities_constraint(client_id, check_in_id, checkout_id)
             
@@ -285,7 +297,7 @@ class Solver:
         self.__apply_maximum_time_constraint()
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
         self.__apply_no_overlap_activity_constraint(check_in_id)
-        self.__apply_gap_between_activity_constraint(mri_elite_15T_id, mri_ultimate_15T_id, mri_ultimate_3T_id)
+        self.__apply_gap_between_activity_constraint(mri_elite_15T_id, mri_ultimate_3T_id)
         
         end_time = datetime.now()
         print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -423,7 +435,7 @@ class Solver:
         """
         start_time = datetime.now()
         
-        start_activity_id = self.__activities_names_map['Check-in, Consent & Change'][0].activity_id
+        start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         
         previous_num_clients = 0
         for assessment in self.assessments:
@@ -442,31 +454,69 @@ class Solver:
                     continue
                 
                 condition_type = condition.type
+                if condition_type is None:
+                    raise ValueError('Invalid condition type')
+                
                 condition_activity_id = condition.activity_id
+                if condition_activity_id is None:
+                    raise ValueError('Invalid condition activity id')
+                
                 condition_criteria_value = condition.criteria.value
                 condition_criteria_between_values_start = condition.criteria.between_values.start
                 condition_criteria_between_values_end = condition.criteria.between_values.end
-                condition_criteria_type = condition.criteria.criteria_type
                 
-                if condition_criteria_type == m.CriteriaTypes.TIME and condition_type != m.ConditionTypes.BETWEEN:
-                    if condition_type == m.ConditionTypes.WITHIN:
-                        condition_criteria_value = timedelta(minutes=int(condition_criteria_value))
+                if condition_criteria_value is None and condition_criteria_between_values_start is None and condition_criteria_between_values_end is None:
+                    raise ValueError('Invalid condition criteria value')
+                
+                if condition_criteria_value is None and (condition_criteria_between_values_start is None or condition_criteria_between_values_end is None):
+                    raise ValueError('Invalid condition criteria between values')
+                
+                condition_criteria = condition.criteria
+                if condition_criteria is None:
+                    raise ValueError('Invalid condition criteria')
+                
+                condition_criteria_type = condition.criteria.criteria_type
+                if condition_criteria_type is None:
+                    raise ValueError('Invalid condition criteria type')
+                
+                if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
+                    if condition_type == m.ConditionTypes.BETWEEN:
+                        condition_criteria_between_values_start = str(condition_criteria_between_values_start)
+                        condition_criteria_between_values_end = str(condition_criteria_between_values_end)
                     else:
-                        time_value = datetime.strptime(condition_criteria_value, "%H:%M")
-                        condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
-                elif condition_criteria_type == m.CriteriaTypes.ORDER and condition_type != m.ConditionTypes.BETWEEN:
-                    condition_criteria_value = int(condition_criteria_value)
-                elif condition_criteria_type == m.CriteriaTypes.TIME and condition_type == m.ConditionTypes.BETWEEN:
-                    before_time_value = datetime.strptime(condition_criteria_between_values_start, "%H:%M")
-                    condition_criteria_between_values_start = timedelta(hours=before_time_value.hour, minutes=before_time_value.minute, seconds=before_time_value.second)
-                    after_time_value = datetime.strptime(condition_criteria_between_values_end, "%H:%M")
-                    condition_criteria_between_values_end = timedelta(hours=after_time_value.hour, minutes=after_time_value.minute, seconds=after_time_value.second)
-                elif condition_criteria_type == m.CriteriaTypes.ORDER and condition_type == m.ConditionTypes.BETWEEN:
-                    condition_criteria_between_values_start = int(condition_criteria_between_values_start)
-                    condition_criteria_between_values_end = int(condition_criteria_between_values_end)
-                elif condition_type == m.ConditionTypes.WITHIN:
-                    time_value = datetime.strptime(condition_criteria_value, "%H:%M")
-                    condition_criteria_value = timedelta(hours=time_value.hour, minutes=time_value.minute, seconds=time_value.second)
+                        condition_criteria_value = str(condition_criteria_value)
+                elif condition_criteria_type == m.CriteriaTypes.TIME:
+                    if condition_type == m.ConditionTypes.BETWEEN:
+                        is_valid_format = len(re.findall(r':', condition_criteria_between_values_start)) == 2
+                        
+                        if not is_valid_format:
+                            condition_criteria_between_values_start += ':00'
+                            condition_criteria_between_values_start = datetime.strptime(condition_criteria_between_values_start, "%H:%M:%S")
+                            condition_criteria_between_values_start = timedelta(hours=condition_criteria_between_values_start.hour, minutes=condition_criteria_between_values_start.minute, seconds=condition_criteria_between_values_start.second)
+                            
+                        is_valid_format = len(re.findall(r':', condition_criteria_between_values_end)) == 2
+                        
+                        if not is_valid_format:
+                            condition_criteria_between_values_end += ':00'
+                            condition_criteria_between_values_end = datetime.strptime(condition_criteria_between_values_end, "%H:%M:%S")
+                            condition_criteria_between_values_end = timedelta(hours=condition_criteria_between_values_end.hour, minutes=condition_criteria_between_values_end.minute, seconds=condition_criteria_between_values_end.second)
+                    else:
+                        time_format = len(re.findall(r':', condition_criteria_value))
+                        
+                        if time_format == 1:
+                            condition_criteria_value += ':00'
+                            condition_criteria_value = datetime.strptime(condition_criteria_value, "%H:%M:%S")
+                            condition_criteria_value = timedelta(hours=condition_criteria_value.hour, minutes=condition_criteria_value.minute, seconds=condition_criteria_value.second)
+                            
+                        elif time_format == 0:
+                            condition_criteria_value = timedelta(minutes=int(condition_criteria_value))
+                        
+                elif condition_criteria_type == m.CriteriaTypes.ORDER:
+                    if condition_type == m.ConditionTypes.WITHIN:
+                        condition_criteria_between_values_start = int(condition_criteria_between_values_start)
+                        condition_criteria_between_values_end = int(condition_criteria_between_values_end)
+                    else:
+                        condition_criteria_value = int(condition_criteria_value)
                 
                 for client_id in range(previous_num_clients, previous_num_clients + assessment.data['num_clients']):                    
                     if condition_type == m.ConditionTypes.BEFORE:
@@ -499,8 +549,8 @@ class Solver:
                             self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
                         elif condition_criteria_type == m.CriteriaTypes.ORDER:
                             self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
-                        # else:
-                        #     raise ValueError('Invalid condition option type for between constraint')
+                        else:
+                            raise ValueError('Invalid condition option type for between constraint')
                     elif condition_type == m.ConditionTypes.WITHIN:
                         other_activity_id = start_activity_id
                         self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value)
@@ -527,8 +577,10 @@ class Solver:
             before_activity_id (int): the id of the other acti vity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id)])
+        if not generate:
+            return
+        
+        self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id)])
         
     def __apply_before_time_constraint(self, client_id: int, activity_id: int, time_before: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be before a certain time; end time of activity <= time_before.
@@ -799,6 +851,8 @@ class Solver:
         self.__simultaneous_transfers = self.__scenario_action.allow_simultaneous_transfers
         
         self.__horizon = int((self.__time_end - self.__time_start).total_seconds() // 60)
+        
+        self.__num_doctors = self.__scenario_action.doctors_on_duty
     
     @property
     def resources(self) -> List[m.Resource]:

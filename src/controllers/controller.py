@@ -26,7 +26,7 @@ class Controller:
         activity_names_map = collections.defaultdict(list)
         for activity in activities:
             ids_activities_map[activity.activity_id] = activity
-            activity_names_map[activity.activity_name].append(activity)
+            activity_names_map[activity.activity_name.lower()].append(activity)
             activity_ids_map[activity.activity_id] = activity
         
         assessments = retrieve_assessments(authorization)
