@@ -29,7 +29,7 @@ def get_schedule():
     except Exception:
         error = traceback.format_exc()
         print(error)
-        return error, 500
+        return [error], 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')

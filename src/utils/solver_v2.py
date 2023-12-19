@@ -111,6 +111,11 @@ class Solver:
                 
                 activity: m.Activity
                 for activity in _activities:
+                    if activity.deleted:
+                        continue
+                    
+                    if not activity.enabled:
+                        continue
                     
                     room_type = activity.room_type if activity.resource_type == m.ResourceTypes.OTHER else m.ResourceTypes.CLIENT.value
                     rooms = self.__rooms_map[room_type]
@@ -187,6 +192,8 @@ class Solver:
                         self.model.Add(start == 0)
                     else:
                         self.model.Add(start > previous_start)
+                    # if previous_start is not None:
+                    #     self.model.Add(start > previous_start)
                     previous_start = start
                         
                 self.starts_per_activity[activity.id].append(start)
@@ -429,6 +436,9 @@ class Solver:
                     continue
                 
                 if not condition.mandatory:
+                    continue
+                
+                if not condition.enabled:
                     continue
                 
                 condition_type = condition.type
@@ -968,7 +978,7 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 5))).total_seconds()
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 10))).total_seconds()
         
         start_time = datetime.now()
         self.__status = self.__solver.Solve(self.model)        
