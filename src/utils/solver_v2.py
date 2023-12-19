@@ -6,6 +6,7 @@ from datetime import timedelta, datetime
 import collections
 import os
 import re
+import uuid
 
 class Solver:
     """A class for solving the scheduling problem of the assessments.
@@ -72,6 +73,8 @@ class Solver:
         self.transfer_floors = dict()
         
         self.__clients_scenarios_map = dict()
+        self.__activities_uids_map = dict()
+        self.__uids_activities_map = collections.defaultdict(list)
     
     def __define_objective(self, mode: sm.SolverMode = sm.SolverMode.GAPS.value):
         """Helper function for defining the objective of the solver
@@ -124,7 +127,7 @@ class Solver:
                     
                     room: m.Resource
                     for room in rooms:
-                        if room_count > self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM:
+                        if room_count >= self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM.value:
                             break
                         
                         duration = activity.time_allocations.default_time
@@ -172,8 +175,24 @@ class Solver:
             previous_end = None
             
             for i, activities in enumerate(schedule):
-                activity = activities[0]
-                                
+                activity_uids = set([activity.id for activity in activities])
+                
+                if len(activity_uids) != 1:
+                    activity_uid = None
+                    for uid in activity_uids:
+                        if uid in self.__activities_uids_map:
+                            activity_uid = self.__activities_uids_map[uid]
+                            break
+                        
+                    if activity_uid is None:
+                        activity_uid = uuid.uuid4().hex                    
+                else:
+                    activity_uid = activity_uids.pop()
+                
+                for activity in activities:
+                    self.__activities_uids_map[activity.id] = activity_uid
+                    self.__uids_activities_map[activity_uid].append(activity.id)
+
                 min_duration = activities[0].duration
                 max_duration = activities[0].duration
                 
@@ -181,7 +200,7 @@ class Solver:
                     min_duration = min(min_duration, activity_room.duration)
                     max_duration = max(max_duration, activity_room.duration)
                 
-                suffix = f'_c{client_id}_a{activity.id}'
+                suffix = f'_c{client_id}_a{activity_uid}'
                 start = self.model.NewIntVar(0, self.__horizon, f'start{suffix}')
                 duration = self.model.NewIntVar(min_duration, max_duration, f'duration{suffix}')
                 end = self.model.NewIntVar(0, self.__horizon, f'end{suffix}')
@@ -189,32 +208,30 @@ class Solver:
                 floor = self.model.NewIntVar(0, self.__num_floors, f'floor{suffix}')
                 order = self.model.NewIntVar(0, len(schedule) - 1, f'order{suffix}')
                 
-                self.starts[(client_id, activity.id)] = start
-                self.ends[(client_id, activity.id)] = end
-                self.intervals[(client_id, activity.id)] = interval
-                self.floors[(client_id, activity.id)] = floor
-                self.orders[(client_id, activity.id)] = order
+                self.starts[(client_id, activity_uid)] = start
+                self.ends[(client_id, activity_uid)] = end
+                self.intervals[(client_id, activity_uid)] = interval
+                self.floors[(client_id, activity_uid)] = floor
+                self.orders[(client_id, activity_uid)] = order
                 
                 self.model.AddModuloEquality(0, start, self.__time_max_interval)
                 self.model.AddModuloEquality(0, end, self.__time_max_interval)
                                
                 previous_end = end
-                if activity.id == start_activity_id:
+                if activity_uid == start_activity_id:
                     if previous_start == None:
                         self.model.Add(start == 0)
                     else:
                         self.model.Add(start > previous_start)
-                    # if previous_start is not None:
-                    #     self.model.Add(start > previous_start)
                     previous_start = start
                         
-                self.starts_per_activity[activity.id].append(start)
-                self.ends_per_activity[activity.id].append(end)
+                self.starts_per_activity[activity_uid].append(start)
+                self.ends_per_activity[activity_uid].append(end)
                   
                 if len(activities) > 1:
                     current_activity_rooms = []
                     for activity_room in activities:
-                        other_suffix = f'_c{client_id}_a{activity.id}_r{activity_room.room_id}'
+                        other_suffix = f'_c{client_id}_a{activity_uid}_r{activity_room.room_id}'
                         current_start = self.model.NewIntVar(0, self.__horizon, f'start{other_suffix}')
                         current_duration = activity_room.duration
                         current_end = self.model.NewIntVar(0, self.__horizon, f'end{other_suffix}')
@@ -225,10 +242,10 @@ class Solver:
                         current_activity_rooms.append(current_room)
                         self.intervals_per_room[activity_room.room_id].append(current_interval)
                         self.intervals_per_client[client_id].append(current_interval)
-                        self.intervals_per_activity[activity.id].append(current_interval)
-                        self.rooms_per_activity[(activity.id, activity_room.room_id)].append(current_room)
+                        self.intervals_per_activity[activity_uid].append(current_interval)
+                        self.rooms_per_activity[(activity_uid, activity_room.room_id)].append(current_room)
                         
-                        self.rooms[(client_id, activity.id, activity_room.room_id)] = current_room
+                        self.rooms[(client_id, activity_uid, activity_room.room_id)] = current_room
                         
                         self.model.Add(current_start == start).OnlyEnforceIf(current_room)
                         self.model.Add(current_end == end).OnlyEnforceIf(current_room)
@@ -240,9 +257,9 @@ class Solver:
                 else:
                     self.intervals_per_room[activity.room_id].append(interval)
                     self.intervals_per_client[client_id].append(interval)
-                    self.intervals_per_activity[activity.id].append(interval)
+                    self.intervals_per_activity[activity_uid].append(interval)
                     
-                    self.rooms[(client_id, activity.id, activity.room_id)] = self.model.NewConstant(1)
+                    self.rooms[(client_id, activity_uid, activity.room_id)] = self.model.NewConstant(1)
                     
                     self.model.Add(floor == activity.room_floor)
                 
@@ -352,8 +369,9 @@ class Solver:
         """
         for client_id, schedule in enumerate(self.__schedules):
             arcs = []
-            for activity_index, activities in enumerate(schedule):
-                activity_id = activities[0].id
+            for activity_index, activities in enumerate(schedule):                
+                activity_id = self.__activities_uids_map[activities[0].id]
+                
                 first_activity = self.model.NewBoolVar(f'{activity_index} is first activity')
                 last_activity = self.model.NewBoolVar(f'{activity_index} is last activity')
                 
@@ -363,13 +381,15 @@ class Solver:
                 for other_activity_index, other_activities in enumerate(schedule):
                     if activity_index == other_activity_index:
                         continue
-                    other_activity_id = other_activities[0].id
+                        
+                    other_activity_id = self.__activities_uids_map[other_activities[0].id]
+                    
                     consecutive_activities = self.model.NewBoolVar(f'{other_activity_id} is after {activity_id}')
                     self.transfer_precedences[(client_id, activity_index, other_activity_index)] = consecutive_activities
                     
                     arcs.append((activity_index + 1, other_activity_index + 1, consecutive_activities))
                     
-                    self.model.Add(self.orders[(client_id, other_activity_id)] > self.orders[(client_id, activity_id)]).OnlyEnforceIf(consecutive_activities)
+                    self.model.Add(self.orders[(client_id, other_activity_id)] > self.orders[client_id, activity_id]).OnlyEnforceIf(consecutive_activities)
                     
                     suffix = f'_trf_c_{client_id}_a_{activity_id}_a_{other_activity_id}'
                     transfer_floor = self.model.NewBoolVar(f'floor{suffix}')
@@ -460,6 +480,7 @@ class Solver:
                 condition_activity_id = condition.activity_id
                 if condition_activity_id is None:
                     raise ValueError('Invalid condition activity id')
+                condition_activity_id = self.__activities_uids_map[str(condition_activity_id)]
                 
                 condition_criteria_value = condition.criteria.value
                 condition_criteria_between_values_start = condition.criteria.between_values.start
@@ -481,10 +502,10 @@ class Solver:
                 
                 if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
                     if condition_type == m.ConditionTypes.BETWEEN:
-                        condition_criteria_between_values_start = str(condition_criteria_between_values_start)
-                        condition_criteria_between_values_end = str(condition_criteria_between_values_end)
+                        condition_criteria_between_values_start = self.__activities_uids_map[str(condition_criteria_between_values_start)]
+                        condition_criteria_between_values_end = self.__activities_uids_map[str(condition_criteria_between_values_end)]
                     else:
-                        condition_criteria_value = str(condition_criteria_value)
+                        condition_criteria_value = self.__activities_uids_map[str(condition_criteria_value)]
                 elif condition_criteria_type == m.CriteriaTypes.TIME:
                     if condition_type == m.ConditionTypes.BETWEEN:
                         is_valid_format = len(re.findall(r':', condition_criteria_between_values_start)) == 2
@@ -948,7 +969,7 @@ class Solver:
         self.__activities_ids_map = _activities_map
     
     @property
-    def ids_activities_map(self) -> List[m.Activity]:
+    def ids_activities_map(self) -> Dict[str, m.Activity]:
         """Getter attribute for the activities map
         """
         return self.__ids_activities_map
@@ -1066,8 +1087,13 @@ class Solver:
                     self.__solver.Value(end),
                 ])
                 
-                activity = self.__ids_activities_map[activity_id]
-                room = self.__ids_rooms_map[room_id]
+                room: m.Resource = self.__ids_rooms_map[room_id]
+                for activity_uid in self.__uids_activities_map[activity_id]:
+                    activity: m.Activity = self.__ids_activities_map[activity_uid]
+                    
+                    if activity.room_type == room.room_type:
+                        break
+                
                 client_scenario.activities.append(m.ScenarioActivity(
                     **activity.__dict__,
                     movable=False,
