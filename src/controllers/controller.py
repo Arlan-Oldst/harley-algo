@@ -59,7 +59,7 @@ class Controller:
         solver = Solver()
         solver.scenario_action = scenario_action
         solver.resources = resources
-        solver.assessments = assessments
+        solver.assessments = sorted(assessments, key=lambda assessment: assessment.assessment_name)
         solver.activities = activities
         solver.ids_activities_map = ids_activities_map
         solver.activities_names_map = activity_names_map

@@ -155,9 +155,9 @@ class Solver:
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
-            client_type = m.ClientType.ULTIMATE if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ELITE
+            client_type = m.ClientType.ELITE if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ULTIMATE
             
-            assessment_index = 0 if client_type == m.ClientType.ULTIMATE else 1
+            assessment_index = 0 if client_type == m.ClientType.ELITE else 1
             
             client_sex = m.ClientSex.MALE if client_id < self.assessments[assessment_index].data['num_male_clients'] else m.ClientSex.FEMALE
             
@@ -1053,7 +1053,7 @@ class Solver:
         self.__define_objective()
         
         self.__solver = cp_model.CpSolver()
-        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 10))).total_seconds()
+        self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
         
         start_time = datetime.now()
         self.__status = self.__solver.Solve(self.model)        
@@ -1066,32 +1066,21 @@ class Solver:
         if self.__status != cp_model.OPTIMAL and self.__status != cp_model.FEASIBLE:
             raise ValueError('Cannot generate schedule')
         
-        self.__generated_schedules = []
         self.__generated_scenarios = []
         
         for client_id, _ in enumerate(self.__schedules):
             client_scenario: m.ClientScenario = self.__clients_scenarios_map[client_id]
-            generated_schedule = []
             activities = [(key[1], self.__solver.Value(value)) for key, value in self.starts.items() if key[0] == client_id]
             activities.sort(key=lambda activity: activity[1])
             
             for activity_id, start in activities:
                 room_id = next((key[2] for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id and self.__solver.Value(value)))
-                floor = self.floors[(client_id, activity_id)]
-                end = self.ends[(client_id, activity_id)]
-                generated_schedule.append([
-                    activity_id,
-                    room_id,
-                    self.__solver.Value(floor),
-                    start,
-                    self.__solver.Value(end),
-                ])
                 
                 room: m.Resource = self.__ids_rooms_map[room_id]
                 for activity_uid in self.__uids_activities_map[activity_id]:
                     activity: m.Activity = self.__ids_activities_map[activity_uid]
-                    
-                    if activity.room_type == room.room_type:
+                                        
+                    if activity.room_type == room.room_type.value:
                         break
                 
                 client_scenario.activities.append(m.ScenarioActivity(
@@ -1105,13 +1094,6 @@ class Solver:
             for key, value in self.transfer_starts.items():
                 if self.__solver.Value(self.transfer_precedences[key]) and self.__solver.Value(self.transfer_floors[key]) and key[0] == client_id:
                     transfer_start = self.__solver.Value(value)
-                    generated_schedule.append([
-                        'Transfer',
-                        'None',
-                        'None',
-                        self.__solver.Value(value),
-                        self.__solver.Value(self.transfer_ends[key]),
-                    ])
                     client_scenario.activities.append(m.TransferActivity(
                         activity_name='Transfer',
                         time_allocations=m.TimeAllocation(default_time=5),
@@ -1122,7 +1104,5 @@ class Solver:
             
             client_scenario.activities.sort(key=lambda activity: activity.assigned_time)
             self.__generated_scenarios.append(client_scenario.to_json())
-            self.__generated_schedules.append(sorted(generated_schedule, key=lambda activity: activity[3]))
         
         return self.__generated_scenarios
-        return self.__generated_schedules
