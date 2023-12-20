@@ -279,12 +279,11 @@ class Solver:
         - Room conditions
         """
         start_time = datetime.now()
-        check_in_id = self.activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
-        first_consult_id = self.activities_names_map['Consultation and Physical'.lower()][0].activity_id
-        final_consult_id = self.activities_names_map['Final Consult'.lower()][0].activity_id
-        mri_elite_15T_id = self.activities_names_map['MRI Elite'.lower()][0].activity_id
-        mri_ultimate_3T_id = self.activities_names_map['MRI Ultimate'.lower()][0].activity_id[0]
-        # mri_ultimate_15T_id = self.activities_names_map['MRI Ultimate'][1].activity_id
+        check_in_id = self.__activities_uids_map[self.activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id]
+        first_consult_id = self.__activities_uids_map[self.activities_names_map['Consultation and Physical'.lower()][0].activity_id]
+        final_consult_id = self.__activities_uids_map[self.activities_names_map['Final Consult'.lower()][0].activity_id]
+        mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Elite'.lower()][0].activity_id] if self.assessments[0].enabled else None
+        mri_ultimate_id = self.__activities_uids_map[self.activities_names_map['MRI Ultimate'.lower()][0].activity_id] if self.assessments[1].enabled else None
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
             
@@ -314,7 +313,7 @@ class Solver:
         self.__apply_maximum_time_constraint()
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
         self.__apply_no_overlap_activity_constraint(check_in_id)
-        self.__apply_gap_between_activity_constraint(mri_elite_15T_id, mri_ultimate_3T_id)
+        self.__apply_gap_between_activity_constraint(mri_elite_id, mri_ultimate_id)
         
         end_time = datetime.now()
         print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -337,9 +336,9 @@ class Solver:
     def __apply_gap_between_activity_constraint(self, *activity_ids):
         """Helper function for applying the gap between activities at specific room of the solver. Forces time max interval gaps between activities at specific room.
         """
-        starts_per_activity = [start for activity_id in activity_ids for start in self.starts_per_activity[activity_id]]
+        starts_per_activity = [start for activity_id in activity_ids for start in self.starts_per_activity[activity_id] if activity_id is not None]
         
-        ends_per_activity = [end for activity_id in activity_ids for end in self.ends_per_activity[activity_id]]
+        ends_per_activity = [end for activity_id in activity_ids for end in self.ends_per_activity[activity_id] if activity_id is not None]
         
         for start in starts_per_activity:
             for end in ends_per_activity:
