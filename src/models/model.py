@@ -5,7 +5,7 @@ from datetime import datetime
 import re
 
 class ClientType(Enum):
-    ELITE = 'ELITE'
+    OPTIMAL = 'OPTIMAL'
     ULTIMATE = 'ULTIMATE'
 
 class ClientMaritalType(Enum):

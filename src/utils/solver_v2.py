@@ -92,8 +92,12 @@ class Solver:
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
         """
         for index in range(0, len(self.assessments)):
-            num_male_clients = getattr(self.scenario_action.data, f'client_{self.assessments[index].assessment_name.lower()}').single_male
-            num_female_clients = getattr(self.scenario_action.data, f'client_{self.assessments[index].assessment_name.lower()}').single_female
+            count_attribute = f'client_{self.assessments[index].assessment_name.lower()}'
+            if 'optimal' in count_attribute:
+                count_attribute = count_attribute.replace('optimal', 'elite')
+            
+            num_male_clients = getattr(self.scenario_action.data, count_attribute).single_male
+            num_female_clients = getattr(self.scenario_action.data, count_attribute).single_female
             
             num_clients = num_male_clients + num_female_clients
 
@@ -155,9 +159,9 @@ class Solver:
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
-            client_type = m.ClientType.ELITE if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ULTIMATE
+            client_type = m.ClientType.OPTIMAL if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ULTIMATE
             
-            assessment_index = 0 if client_type == m.ClientType.ELITE else 1
+            assessment_index = 0 if client_type == m.ClientType.OPTIMAL else 1
             
             client_sex = m.ClientSex.MALE if client_id < self.assessments[assessment_index].data['num_male_clients'] else m.ClientSex.FEMALE
             
@@ -282,8 +286,14 @@ class Solver:
         check_in_id = self.__activities_uids_map[self.activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id]
         first_consult_id = self.__activities_uids_map[self.activities_names_map['Consultation and Physical'.lower()][0].activity_id]
         final_consult_id = self.__activities_uids_map[self.activities_names_map['Final Consult'.lower()][0].activity_id]
-        mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Elite'.lower()][0].activity_id] if self.assessments[0].enabled else None
+        
+        if 'MRI Elite'.lower() in self.activities_names_map:
+            mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Elite'.lower()][0].activity_id]
+        elif 'MRI Optimal'.lower() in self.activities_names_map:
+            mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Optimal'.lower()][0].activity_id] if self.assessments[0].enabled else None
+        
         mri_ultimate_id = self.__activities_uids_map[self.activities_names_map['MRI Ultimate'.lower()][0].activity_id] if self.assessments[1].enabled else None
+        
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
             
@@ -300,13 +310,13 @@ class Solver:
         for room_id in self.intervals_per_room.keys():
             self.__apply_no_overlap_room_constraint(room_id)
             
-            if check_in_id in self.rooms_per_activity:
+            if (check_in_id, room_id) in self.rooms_per_activity:
                 self.__apply_unique_room_for_activity_constraint(room_id, check_in_id)
             
-            if first_consult_id in self.rooms_per_activity:
+            if (first_consult_id, room_id) in self.rooms_per_activity:
                 self.__apply_maximum_capacity_constraint(room_id, first_consult_id, 3)
                 
-            if final_consult_id in self.rooms_per_activity:
+            if (final_consult_id, room_id) in self.rooms_per_activity:
                 self.__apply_maximum_capacity_constraint(room_id, final_consult_id, 3)
         
         self.__apply_transfer_constraint()
@@ -1073,7 +1083,7 @@ class Solver:
             activities.sort(key=lambda activity: activity[1])
             
             for activity_id, start in activities:
-                room_id = next((key[2] for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id and self.__solver.Value(value)))
+                room_id = set([key[2] for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id and self.__solver.Value(value)]).pop()
                 
                 room: m.Resource = self.__ids_rooms_map[room_id]
                 for activity_uid in self.__uids_activities_map[activity_id]:
