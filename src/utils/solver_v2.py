@@ -161,7 +161,7 @@ class Solver:
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
             client_type = self.__get_client_type(client_id)
-            client_sex = self.__get_client_sex_by_client_type_and_id(client_type, client_id)
+            client_sex = self.__get_client_sex_by_client_type_and_id(client_id)
             
             client_scenario = m.ClientScenario(
                 client_id,
@@ -545,11 +545,8 @@ class Solver:
                         condition_criteria_between_values_end = int(condition_criteria_between_values_end)
                     else:
                         condition_criteria_value = int(condition_criteria_value)
-                
-                if condition_criteria_value is None:
-                    continue
 
-                for client_id in range(previous_num_clients, previous_num_clients + assessment.data['num_clients']):                    
+                for client_id in range(previous_num_clients, previous_num_clients + assessment.data['num_clients']):
                     if condition_type == m.ConditionTypes.BEFORE:
                         if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
                             self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
@@ -590,8 +587,8 @@ class Solver:
                             self.__apply_order_constraint(client_id, condition_activity_id, condition_criteria_value)
                         else:
                             raise ValueError('Invalid condition option type for in fixed order as constraint')
-                    else:
-                        raise ValueError('Invalid condition option')
+                    # else:
+                    #     raise ValueError('Invalid condition option')
 
             previous_num_clients += assessment.data['num_clients']
                 
@@ -776,37 +773,7 @@ class Solver:
         
         self.model.Add(self.orders[(client_id, activity_id)] == order)
     
-    # def __apply_room_constraints(self):
-    #     start_time = datetime.now()
-        
-    #     for room_id, conditions in self.__room_conditions:
-    #         condition: sm.Condition
-    #         for condition in conditions:
-    #             if condition.scope != sm.ConditionScope.ROOM.value:
-    #                 raise ValueError('Invalid condition scope for room constraint')
-                
-    #             if condition.option == sm.RoomConditionOption.MAXIMUM.value:
-    #                 if condition.option_type == sm.RoomConditionOptionType.CLIENT.value:
-    #                     self.__apply_maximum_capacity_constraint(**condition.args)
-    #                 else:
-    #                     raise ValueError('Invalid condition option type for maximum room constraint')
-    #             elif condition.option == sm.RoomConditionOption.UNIQUE.value:
-    #                 if condition.option_type == sm.RoomConditionOptionType.ACTIVITY.value:
-    #                     self.__apply_unique_room_for_activity_constraint(**condition.args)
-    #                 else:
-    #                     raise ValueError('Invalid condition option type for unique room constraint')
-    #             elif condition.option == sm.RoomConditionOption.SAME.value:
-    #                 if condition.option_type == sm.RoomConditionOptionType.ACTIVITY.value:
-    #                     self.__apply_same_room_for_activities_constraint(**condition.args)
-    #                 else:
-    #                     raise ValueError('Invalid condition option type for same room constraint')
-    #             else:
-    #                 raise ValueError('Invalid condition option')
-
-    #     end_time = datetime.now()
-    #     print(f'Total Time for applying room constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
-    
-    # # Room Conditions
+    # Room Conditions
     def __apply_maximum_capacity_constraint(self, room_id: int, activity_id, capacity: int, generate: bool = True):
         """[Room Condition] Applies the condition that a room must have a maximum capacity; sum of clients in room <= capacity.
 
@@ -999,12 +966,17 @@ class Solver:
         return self.__assessments
     
     @assessments.setter
-    def assessments(self, _assessments: List[dict]) -> None:
+    def assessments(self, _assessments: Dict[str, m.Assessment]) -> None:
         """Setter attribute for the assessments
         """
         assert len(_assessments), 'Invalid assessments'
         
-        self.__assessments = _assessments
+        _assessment_names = sorted(list(_assessments.keys()), key=self.__get_assessment_priority)
+
+        self.__assessments = {
+            _assessment_name: _assessments[_assessment_name]
+            for _assessment_name in _assessment_names
+        }
         
     @property
     def general_conditions(self) -> List[m.GeneralCondition]:
@@ -1060,7 +1032,7 @@ class Solver:
         self.__solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
         
         start_time = datetime.now()
-        self.__status = self.__solver.Solve(self.model)        
+        self.__status = self.__solver.Solve(self.model)
         end_time = datetime.now()
         
         print(self.__solver.StatusName(self.__status))
@@ -1117,7 +1089,6 @@ class Solver:
         num_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_clients']
         num_clients_core = self.assessments[m.ClientType.CORE.value].data['num_clients']
 
-        print(client_id)
         if client_id in range(0, num_clients_optimal):
             return m.ClientType.OPTIMAL
         elif client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate):
@@ -1125,8 +1096,31 @@ class Solver:
         elif client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core):
             return m.ClientType.CORE
 
-    def __get_client_sex_by_client_type_and_id(self, client_type: m.ClientType, client_id: int) -> m.ClientSex:
-        num_male_clients = self.assessments[client_type.value].data['num_male_clients']
-        if client_id < num_male_clients:
-            return m.ClientSex.MALE
+    def __get_client_sex_by_client_type_and_id(self, client_id: int) -> m.ClientSex:
+        num_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_clients']
+        num_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_clients']
+        num_clients_core = self.assessments[m.ClientType.CORE.value].data['num_clients']
+
+        num_male_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_male_clients']
+        num_male_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_male_clients']
+        num_male_clients_core = self.assessments[m.ClientType.CORE.value].data['num_male_clients']
+        
+        if client_id in range(0, num_clients_optimal):
+            if client_id in range(0, num_male_clients_optimal):
+                return m.ClientSex.MALE
+        elif client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate):
+            if client_id in range(num_clients_optimal, num_clients_optimal + num_male_clients_ultimate):
+                return m.ClientSex.MALE
+        elif client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core):
+            if client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate + num_male_clients_core):
+                return m.ClientSex.MALE
         return m.ClientSex.FEMALE
+    
+    def __get_assessment_priority(self, assessment_name: str) -> int:
+        assessment_name = assessment_name.upper()
+        if assessment_name == m.ClientType.OPTIMAL.value:
+            return 0
+        elif assessment_name == m.ClientType.ULTIMATE.value:
+            return 1
+        elif assessment_name == m.ClientType.CORE.value:
+            return 2

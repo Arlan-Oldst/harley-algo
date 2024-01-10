@@ -8,7 +8,7 @@ class SolverMode(Enum):
     GAPS = 'GAPS'
 
 class ClientType(Enum):
-    ELITE = 'ELITE'
+    OPTIMAL = 'OPTIMAL'
     ULTIMATE = 'ULTIMATE'
 
 class ConditionScope(Enum):

@@ -42,9 +42,9 @@ class Controller:
             activity_conditions = retrieve_activity_conditions_by_assessment_id(authorization, assessment.assessment_id)
             assessment.data['activity_conditions'] = activity_conditions
             
-            other_names = [name for name in assessment_names if name != assessment.assessment_name]
+            other_names = [name for name in assessment_names if name.lower() != assessment.assessment_name.lower()]
             pattern = f'({"|".join(other_names)})'
-            assessment.data['activities'] = [
+            _activities = [
                 activity_names_map[activity_name]
                 for activity_name in activity_names_map
                 if re.search(
@@ -53,6 +53,7 @@ class Controller:
                     re.IGNORECASE
                 ) is None
             ]
+            assessment.data['activities'] = _activities
                 
         resources = retrieve_resources(authorization)
         
