@@ -8,3 +8,6 @@ harley_google_or_tools_research.py
 *.ts
 *.json
 .env
+.env.dev
+.env.stg
+*.bat

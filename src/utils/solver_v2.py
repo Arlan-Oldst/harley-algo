@@ -91,25 +91,26 @@ class Solver:
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
         """
-        for index in range(0, len(self.assessments)):
-            count_attribute = f'client_{self.assessments[index].assessment_name.lower()}'
+        for assessment_name, assessment in self.assessments.items():
+            count_attribute = f'client_{assessment_name.lower()}'
             if 'optimal' in count_attribute:
                 count_attribute = count_attribute.replace('optimal', 'elite')
-            
-            num_male_clients = getattr(self.scenario_action.data, count_attribute).single_male
-            num_female_clients = getattr(self.scenario_action.data, count_attribute).single_female
+            count_data = getattr(self.scenario_action.data, count_attribute)
+
+            num_male_clients = getattr(count_data, 'single_male', 0)
+            num_female_clients = getattr(count_data, 'single_female', 0)
             
             num_clients = num_male_clients + num_female_clients
 
-            self.assessments[index].data['num_clients'] = num_clients
-            self.assessments[index].data['num_female_clients'] = num_female_clients
-            self.assessments[index].data['num_male_clients'] = num_male_clients
+            assessment.data['num_clients'] = num_clients
+            assessment.data['num_female_clients'] = num_female_clients
+            assessment.data['num_male_clients'] = num_male_clients
 
             if not num_clients:
-                self.assessments[index].enabled = False
+                self.assessments[assessment_name].enabled = False
                 continue
             
-            activities = self.assessments[index].data['activities']
+            activities = self.assessments[assessment_name].data['activities']
             # TODO: Get duration according to gender if is_gender_time_allocated. Uses default for now
             # TODO: Activity ID for now is the activity name
             schedule = []
@@ -159,11 +160,8 @@ class Solver:
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
-            client_type = m.ClientType.OPTIMAL if client_id < self.assessments[0].data['num_clients'] else m.ClientType.ULTIMATE
-            
-            assessment_index = 0 if client_type == m.ClientType.OPTIMAL else 1
-            
-            client_sex = m.ClientSex.MALE if client_id < self.assessments[assessment_index].data['num_male_clients'] else m.ClientSex.FEMALE
+            client_type = self.__get_client_type(client_id)
+            client_sex = self.__get_client_sex_by_client_type_and_id(client_type, client_id)
             
             client_scenario = m.ClientScenario(
                 client_id,
@@ -287,12 +285,8 @@ class Solver:
         first_consult_id = self.__activities_uids_map[self.activities_names_map['Consultation and Physical'.lower()][0].activity_id]
         final_consult_id = self.__activities_uids_map[self.activities_names_map['Final Consult'.lower()][0].activity_id]
         
-        if 'MRI Elite'.lower() in self.activities_names_map:
-            mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Elite'.lower()][0].activity_id]
-        elif 'MRI Optimal'.lower() in self.activities_names_map:
-            mri_elite_id = self.__activities_uids_map[self.activities_names_map['MRI Optimal'.lower()][0].activity_id] if self.assessments[0].enabled else None
-        
-        mri_ultimate_id = self.__activities_uids_map[self.activities_names_map['MRI Ultimate'.lower()][0].activity_id] if self.assessments[1].enabled else None
+        mri_elite_id = self.__activities_uids_map.get(self.activities_names_map['MRI Optimal'.lower()][0].activity_id, None) if self.assessments[m.ClientType.OPTIMAL.value].enabled else None
+        mri_ultimate_id = self.__activities_uids_map.get(self.activities_names_map['MRI Ultimate'.lower()][0].activity_id, None) if self.assessments[m.ClientType.ULTIMATE.value].enabled else None
         
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
@@ -323,7 +317,9 @@ class Solver:
         self.__apply_maximum_time_constraint()
         self.__apply_simultaneous_transfers_constraint(self.__simultaneous_transfers)
         self.__apply_no_overlap_activity_constraint(check_in_id)
-        self.__apply_gap_between_activity_constraint(mri_elite_id, mri_ultimate_id)
+
+        if mri_elite_id or mri_ultimate_id:
+            self.__apply_gap_between_activity_constraint(mri_elite_id, mri_ultimate_id)
         
         end_time = datetime.now()
         print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -467,7 +463,7 @@ class Solver:
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         
         previous_num_clients = 0
-        for assessment in self.assessments:
+        for assessment in self.assessments.values():
             if not assessment.enabled:
                 continue
             
@@ -489,7 +485,9 @@ class Solver:
                 condition_activity_id = condition.activity_id
                 if condition_activity_id is None:
                     raise ValueError('Invalid condition activity id')
-                condition_activity_id = self.__activities_uids_map[str(condition_activity_id)]
+                condition_activity_id = self.__activities_uids_map.get(str(condition_activity_id), None)
+                if condition_activity_id is None:
+                    continue
                 
                 condition_criteria_value = condition.criteria.value
                 condition_criteria_between_values_start = condition.criteria.between_values.start
@@ -508,13 +506,13 @@ class Solver:
                 condition_criteria_type = condition.criteria.criteria_type
                 if condition_criteria_type is None:
                     raise ValueError('Invalid condition criteria type')
-                
+
                 if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
                     if condition_type == m.ConditionTypes.BETWEEN:
                         condition_criteria_between_values_start = self.__activities_uids_map[str(condition_criteria_between_values_start)]
                         condition_criteria_between_values_end = self.__activities_uids_map[str(condition_criteria_between_values_end)]
                     else:
-                        condition_criteria_value = self.__activities_uids_map[str(condition_criteria_value)]
+                        condition_criteria_value = self.__activities_uids_map.get(str(condition_criteria_value), None)
                 elif condition_criteria_type == m.CriteriaTypes.TIME:
                     if condition_type == m.ConditionTypes.BETWEEN:
                         is_valid_format = len(re.findall(r':', condition_criteria_between_values_start)) == 2
@@ -548,6 +546,9 @@ class Solver:
                     else:
                         condition_criteria_value = int(condition_criteria_value)
                 
+                if condition_criteria_value is None:
+                    continue
+
                 for client_id in range(previous_num_clients, previous_num_clients + assessment.data['num_clients']):                    
                     if condition_type == m.ConditionTypes.BEFORE:
                         if condition_criteria_type == m.CriteriaTypes.ACTIVITY:
@@ -847,7 +848,8 @@ class Solver:
             
             for (_, room), (_, other_room) in zip(activity_rooms, other_activity_rooms):
                 self.model.Add(room == other_room)
-        
+    
+    # Attributes
     @property
     def scenario_action(self) -> m.ScenarioAction:
         """Getter attribute for the assessments
@@ -864,8 +866,9 @@ class Solver:
                 **_scenario_action,
                 data=m.ScenarioActionData(
                     out_order_rooms=_scenario_action_data['out_of_order_rooms'],
-                    client_elite=m.ClientElite(**_scenario_action_data['client_elite']),
-                    client_ultimate=m.ClientUltimate(**_scenario_action_data['client_ultimate']),
+                    client_elite=m.ClientCount(**_scenario_action_data['client_elite']),
+                    client_ultimate=m.ClientCount(**_scenario_action_data['client_ultimate']),
+                    client_core=m.ClientCount(**_scenario_action_data['client_core']),
                 )
             )
         else:
@@ -990,7 +993,7 @@ class Solver:
         self.__ids_activities_map = _activities_map
     
     @property
-    def assessments(self) -> List[m.Assessment]:
+    def assessments(self) -> Dict[str, m.Assessment]:
         """Getter attribute for the assessments
         """
         return self.__assessments
@@ -1001,16 +1004,7 @@ class Solver:
         """
         assert len(_assessments), 'Invalid assessments'
         
-        if not isinstance(_assessments[0], m.Assessment):
-            # TODO: Modify sort to be based on priority
-            self.__assessments = [
-                m.Assessment(
-                    **assessment
-                )
-                for assessment in _assessments
-            ]
-        else:
-            self.__assessments = _assessments
+        self.__assessments = _assessments
         
     @property
     def general_conditions(self) -> List[m.GeneralCondition]:
@@ -1051,6 +1045,7 @@ class Solver:
             for room_condition in _room_conditions
         ]
     
+    # Main scenario generating function
     def generate(self):
         assert self.__assessments is not None, 'Invalid assessments'
         
@@ -1115,3 +1110,23 @@ class Solver:
             self.__generated_scenarios.append(client_scenario.to_json())
         
         return self.__generated_scenarios
+    
+    # Helper Methods
+    def __get_client_type(self, client_id: int) -> m.ClientType:
+        num_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_clients']
+        num_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_clients']
+        num_clients_core = self.assessments[m.ClientType.CORE.value].data['num_clients']
+
+        print(client_id)
+        if client_id in range(0, num_clients_optimal):
+            return m.ClientType.OPTIMAL
+        elif client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate):
+            return m.ClientType.ULTIMATE
+        elif client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core):
+            return m.ClientType.CORE
+
+    def __get_client_sex_by_client_type_and_id(self, client_type: m.ClientType, client_id: int) -> m.ClientSex:
+        num_male_clients = self.assessments[client_type.value].data['num_male_clients']
+        if client_id < num_male_clients:
+            return m.ClientSex.MALE
+        return m.ClientSex.FEMALE

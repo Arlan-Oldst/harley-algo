@@ -5,4 +5,7 @@
 .gitignore
 *.ts
 *.json
+.env
+.env.dev
+.env.stg
 harley_google_or_tools_research.py

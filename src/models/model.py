@@ -7,6 +7,7 @@ import re
 class ClientType(Enum):
     OPTIMAL = 'OPTIMAL'
     ULTIMATE = 'ULTIMATE'
+    CORE = 'CORE'
 
 class ClientMaritalType(Enum):
     SINGLE = 'SINGLE'
@@ -155,15 +156,7 @@ class AssessmentActivity(Base):
     data: dict = field(default_factory=dict)
 
 @dataclass
-class ClientElite(Record):
-    single_male: int = 0
-    single_female: int = 0
-    couple_male_female: int = 0
-    couple_male_male: int = 0
-    couple_female_female: int = 0
-
-@dataclass
-class ClientUltimate(Record):
+class ClientCount(Record):
     single_male: int = 0
     single_female: int = 0
     couple_male_female: int = 0
@@ -173,8 +166,9 @@ class ClientUltimate(Record):
 @dataclass
 class ScenarioActionData(Record):
     out_order_rooms: List[str] = field(default_factory=list)
-    client_elite: ClientElite = field(default_factory=ClientElite)
-    client_ultimate: ClientUltimate = field(default_factory=ClientUltimate)
+    client_elite: ClientCount = field(default_factory=ClientCount)
+    client_ultimate: ClientCount = field(default_factory=ClientCount)
+    client_core: ClientCount = field(default_factory=ClientCount)
 
 @dataclass
 class ScenarioAction(Record):
@@ -234,8 +228,7 @@ MODELS = set((
     GeneralCondition,
     Assessment,
     AssessmentActivity,
-    ClientElite,
-    ClientUltimate,
+    ClientCount,
     ScenarioActionData,
     ScenarioAction,
     ClientScenario,

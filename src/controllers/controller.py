@@ -31,11 +31,11 @@ class Controller:
         
         assessments = retrieve_assessments(authorization)
         
-        assessments = [assessment for assessment in assessments if assessment.enabled]
-        assessment_names = [assessment.assessment_name for assessment in assessments if assessment.enabled]
+        assessments = {assessment.assessment_name.upper(): assessment for assessment in assessments if assessment.enabled}
+        assessment_names = [assessment_name for assessment_name, assessment in assessments.items() if assessment.enabled]
         
         
-        for assessment in assessments:
+        for assessment in assessments.values():
             if not assessment.enabled:
                 continue
             
@@ -59,7 +59,7 @@ class Controller:
         solver = Solver()
         solver.scenario_action = scenario_action
         solver.resources = resources
-        solver.assessments = sorted(assessments, key=lambda assessment: assessment.assessment_name)
+        solver.assessments = assessments
         solver.activities = activities
         solver.ids_activities_map = ids_activities_map
         solver.activities_names_map = activity_names_map
