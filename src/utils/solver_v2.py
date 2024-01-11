@@ -7,6 +7,8 @@ import collections
 import os
 import re
 import uuid
+import random
+import itertools
 
 class Solver:
     """A class for solving the scheduling problem of the assessments.
@@ -38,7 +40,14 @@ class Solver:
         
         self.__horizon = None
         
-        self.__activity_type = collections.namedtuple('task_type', 'duration id room_id room_floor')
+        self.__counter_male_optimal = 0
+        self.__counter_female_optimal = 0
+        self.__counter_male_ultimate = 0
+        self.__counter_female_ultimate = 0
+        self.__counter_male_core = 0
+        self.__counter_female_core = 0
+
+        self.__activity_type = collections.namedtuple('task_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
         
         self.model = cp_model.CpModel()
         self.__scenario_action = None
@@ -91,20 +100,52 @@ class Solver:
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
         """
+        previous_num_clients = 0
+        couple_id = 0
         for assessment_name, assessment in self.assessments.items():
             count_attribute = f'client_{assessment_name.lower()}'
             if 'optimal' in count_attribute:
                 count_attribute = count_attribute.replace('optimal', 'elite')
             count_data = getattr(self.scenario_action.data, count_attribute)
 
-            num_male_clients = getattr(count_data, 'single_male', 0)
-            num_female_clients = getattr(count_data, 'single_female', 0)
+            num_single_male_clients = getattr(count_data, 'single_male', 0)
+            num_single_female_clients = getattr(count_data, 'single_female', 0)
+            num_couple_male_male_clients = getattr(count_data, 'couple_male_male', 0)
+            num_couple_female_female_clients = getattr(count_data, 'couple_female_female', 0)
+            num_couple_male_female_clients = getattr(count_data, 'couple_male_female', 0)
             
-            num_clients = num_male_clients + num_female_clients
+            num_clients = sum((
+                num_single_male_clients,
+                num_single_female_clients,
+                num_couple_male_male_clients,
+                num_couple_female_female_clients,
+                num_couple_male_female_clients
+            ))
+            num_male_clients = sum((
+                num_single_male_clients,
+                num_couple_male_male_clients * 2,
+                num_couple_male_female_clients
+            ))
+            num_female_clients = sum((
+                num_single_female_clients,
+                num_couple_female_female_clients * 2,
+                num_couple_male_female_clients
+            ))
+            num_single_clients = sum((
+                num_single_female_clients,
+                num_single_male_clients
+            ))
+            num_couple_clients = sum((
+                num_couple_male_male_clients,
+                num_couple_female_female_clients,
+                num_couple_male_female_clients
+            )) * 2
 
             assessment.data['num_clients'] = num_clients
             assessment.data['num_female_clients'] = num_female_clients
             assessment.data['num_male_clients'] = num_male_clients
+            assessment.data['num_single_clients'] = num_single_clients
+            assessment.data['num_couple_clients'] = num_couple_clients
 
             if not num_clients:
                 self.assessments[assessment_name].enabled = False
@@ -113,43 +154,110 @@ class Solver:
             activities = self.assessments[assessment_name].data['activities']
             # TODO: Get duration according to gender if is_gender_time_allocated. Uses default for now
             # TODO: Activity ID for now is the activity name
-            schedule = []
-            _activities: List[m.Activity]
-            for _activities in activities:
-                activity_rooms = []
+            is_couple_with_previous_client = False
+            for client_id in range(previous_num_clients, previous_num_clients + num_clients):
+                if is_couple_with_previous_client:
+                    is_couple_with_previous_client = False
+                    continue
                 
-                activity: m.Activity
-                for activity in _activities:
-                    if activity.deleted:
-                        continue
+                client_infos = itertools.chain(
+                    [(m.ClientSex.MALE, None, m.ClientMaritalType.SINGLE)] * num_single_male_clients,
+                    [(m.ClientSex.FEMALE, None, m.ClientMaritalType.SINGLE)] * num_single_female_clients,
+                    [(m.ClientSex.MALE, m.ClientSex.MALE, m.ClientMaritalType.COUPLE)] * num_couple_male_male_clients,
+                    [(m.ClientSex.FEMALE, m.ClientSex.FEMALE, m.ClientMaritalType.COUPLE)] * num_couple_female_female_clients,
+                    [(m.ClientSex.MALE, m.ClientSex.FEMALE, m.ClientMaritalType.COUPLE)] * num_couple_male_female_clients
+                )
+                client_info = random.choice(list(client_infos))
+
+                client_type = m.ClientType(assessment.assessment_name.upper())
+                client_scenario = m.ClientScenario(
+                    client_id,
+                    client_type,
+                    client_info[2],
+                    client_info[0],
+                    client_id if client_info[2] == m.ClientMaritalType.SINGLE else None,
+                    couple_id if client_info[2] == m.ClientMaritalType.COUPLE else None,
+                )
+                other_client_scenario = m.ClientScenario(
+                    client_id + 1,
+                    client_type,
+                    client_info[2],
+                    client_info[1],
+                    client_id + 1 if client_info[2] == m.ClientMaritalType.SINGLE else None,
+                    couple_id if client_info[2] == m.ClientMaritalType.COUPLE else None,
+                ) if client_info[1] is not None else None
+
+                self.__clients_scenarios_map[client_id] = client_scenario
+                if other_client_scenario is not None:
+                    self.__clients_scenarios_map[client_id + 1] = other_client_scenario
+                
+                schedule = []
+                other_schedule = []
+                _activities: List[m.Activity]
+                for _activities in activities:
+                    activity_rooms = []
                     
-                    if not activity.enabled:
-                        continue
-                    
-                    room_type = activity.room_type if activity.resource_type == m.ResourceTypes.OTHER else m.ResourceTypes.CLIENT.value
-                    rooms = self.__rooms_map[room_type]
-                    room_count = 0
-                    
-                    room: m.Resource
-                    for room in rooms:
-                        if room_count >= self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM.value:
-                            break
+                    activity: m.Activity
+                    for activity in _activities:
+                        if activity.deleted:
+                            continue
                         
-                        duration = activity.time_allocations.default_time
+                        if not activity.enabled:
+                            continue
                         
-                        if activity.is_gender_time_allocated:
-                            # TODO: support gender time allocated
-                            pass
+                        room_type = activity.room_type if activity.resource_type == m.ResourceTypes.OTHER else m.ResourceTypes.CLIENT.value
+                        rooms = self.__rooms_map[room_type]
+                        room_count = 0
                         
-                        activity_rooms.append(self.__activity_type(duration, activity.activity_id, room.resource_id, room.location))
-                        
-                        self.__num_floors = max(self.__num_floors, room.location)
-                        
-                        room_count += 1
-                        
-                schedule.append(activity_rooms)
-                    
-            self.__schedules.extend([schedule] * num_clients)
+                        room: m.Resource
+                        for room in rooms:
+                            if room_count >= self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM.value:
+                                break
+                            
+                            duration = activity.time_allocations.default_time
+                            
+                            if activity.is_gender_time_allocated:
+                                duration = getattr(activity.time_allocations, client_scenario.sex.value.lower())
+                            
+                            activity_rooms.append(
+                                self.__activity_type(
+                                    duration,
+                                    activity.activity_id,
+                                    room.resource_id,
+                                    room.location,
+                                    client_id,
+                                    client_info[0],
+                                    client_info[2]
+                                )
+                            )
+                            
+                            self.__num_floors = max(self.__num_floors, room.location)
+                            
+                            room_count += 1
+                            
+                    schedule.append(activity_rooms)
+
+                self.__schedules.append(schedule)
+                if len(other_schedule) > 0:
+                    self.__schedules.append(other_schedule)
+
+                if client_info[2] == m.ClientMaritalType.SINGLE:
+                    if client_info[0] == m.ClientSex.MALE:
+                        num_single_male_clients -= 1
+                    elif client_info[0] == m.ClientSex.FEMALE:
+                        num_single_female_clients -= 1
+                
+                elif client_info[2] == m.ClientMaritalType.COUPLE:
+                    if client_info[0] == m.ClientSex.MALE and client_info[1] == m.ClientSex.MALE:
+                        num_couple_male_male_clients -= 1
+                    elif client_info[0] == m.ClientSex.FEMALE and client_info[1] == m.ClientSex.FEMALE:
+                        num_couple_female_female_clients -= 1
+                    elif client_info[0] == m.ClientSex.MALE and client_info[1] == m.ClientSex.FEMALE:
+                        num_couple_male_female_clients -= 1
+                    couple_id += 1
+                    is_couple_with_previous_client = True
+                
+            previous_num_clients += num_clients
     
     def __define_variables(self):
         """Helper function for defining the variables of the solver
@@ -161,15 +269,16 @@ class Solver:
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
             client_type = self.__get_client_type(client_id)
+            client_marital_type = self.__get_client_marital_type(client_id)
             client_sex = self.__get_client_sex_by_client_type_and_id(client_id)
             
             client_scenario = m.ClientScenario(
                 client_id,
                 client_type,
-                m.ClientMaritalType.SINGLE,
+                client_marital_type,
                 client_sex,
-                client_id,
-                None,
+                client_id if client_marital_type == m.ClientMaritalType.SINGLE else None,
+                client_id if client_marital_type == m.ClientMaritalType.COUPLE else None,
                 start_time=self.scenario_action.first_client_arrival_time
             )
             self.__clients_scenarios_map[client_id] = client_scenario
@@ -281,6 +390,7 @@ class Solver:
         - Room conditions
         """
         start_time = datetime.now()
+        # TODO: Change IDs to environment variables
         check_in_id = self.__activities_uids_map[self.activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id]
         first_consult_id = self.__activities_uids_map[self.activities_names_map['Consultation and Physical'.lower()][0].activity_id]
         final_consult_id = self.__activities_uids_map[self.activities_names_map['Final Consult'.lower()][0].activity_id]
@@ -291,6 +401,7 @@ class Solver:
         for client_id, schedule in enumerate(self.__schedules):
             self.__apply_no_overlap_client_constraint(client_id)
             
+            # TODO: Change IDs to environment variables
             lunch_id = self.activities_names_map['Lunch'.lower()][0].activity_id
             
             self.__apply_same_room_for_activities_constraint(client_id, check_in_id, lunch_id)
@@ -302,6 +413,7 @@ class Solver:
             self.__apply_same_room_for_activities_constraint(client_id, first_consult_id, final_consult_id)
                 
         for room_id in self.intervals_per_room.keys():
+            room: m.Resource = self.__ids_rooms_map[room_id] # TODO: Use room type attribute to only apply the no overlap constraint to one of each couple and all single
             self.__apply_no_overlap_room_constraint(room_id)
             
             if (check_in_id, room_id) in self.rooms_per_activity:
@@ -816,6 +928,26 @@ class Solver:
             for (_, room), (_, other_room) in zip(activity_rooms, other_activity_rooms):
                 self.model.Add(room == other_room)
     
+    def __apply_same_room_for_clients_constraint(self, client_id: int, other_client_id: int, activity_id: int, generate: bool = True):
+        """[Room Condition] Applies the condition that the two clients must be in the same room for a given activity; room id of client == room id of other client.
+        
+        Args:
+            client_id (int): the id of the client
+            other_client_id (int): the id of the other client
+            activity_id (int): the id of the activity
+            generate (bool): whether to generate or avoid generating the constraint
+        """
+        if generate:
+            client_rooms = [(key[2], value) for key, value in self.rooms.items() if key[0] == client_id and key[1] == activity_id]
+            other_client_rooms = [(key[2], value) for key, value in self.rooms.items() if key[0] == other_client_id and key[1] == activity_id]
+
+            assert len(client_rooms) == len(other_client_rooms), 'Invalid number of rooms for same room constraint'
+            client_rooms.sort(key=lambda a: a[0])
+            other_client_rooms.sort(key=lambda a: a[0])
+
+            for (_, room), (_, other_room) in zip(client_rooms, other_client_rooms):
+                self.model.Add(room == other_room)
+        
     # Attributes
     @property
     def scenario_action(self) -> m.ScenarioAction:
@@ -1096,6 +1228,23 @@ class Solver:
         elif client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core):
             return m.ClientType.CORE
 
+    def __get_client_marital_type(self, client_id: int) -> m.ClientType:
+        num_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_clients']
+        num_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_clients']
+        num_clients_core = self.assessments[m.ClientType.CORE.value].data['num_clients']
+
+        num_single_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_single_clients']
+        num_single_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_single_clients']
+        num_single_clients_core = self.assessments[m.ClientType.CORE.value].data['num_single_clients']
+
+        if any((
+            all((client_id in range(0, num_clients_optimal), client_id in range(0, num_single_clients_optimal))),
+            all((client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate), client_id in range(num_clients_optimal, num_clients_optimal + num_single_clients_ultimate))),
+            all((client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core), client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate + num_single_clients_core))),
+        )):
+            return m.ClientMaritalType.SINGLE
+        return m.ClientMaritalType.COUPLE
+
     def __get_client_sex_by_client_type_and_id(self, client_id: int) -> m.ClientSex:
         num_clients_optimal = self.assessments[m.ClientType.OPTIMAL.value].data['num_clients']
         num_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_clients']
@@ -1105,15 +1254,12 @@ class Solver:
         num_male_clients_ultimate = self.assessments[m.ClientType.ULTIMATE.value].data['num_male_clients']
         num_male_clients_core = self.assessments[m.ClientType.CORE.value].data['num_male_clients']
         
-        if client_id in range(0, num_clients_optimal):
-            if client_id in range(0, num_male_clients_optimal):
-                return m.ClientSex.MALE
-        elif client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate):
-            if client_id in range(num_clients_optimal, num_clients_optimal + num_male_clients_ultimate):
-                return m.ClientSex.MALE
-        elif client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core):
-            if client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate + num_male_clients_core):
-                return m.ClientSex.MALE
+        if any((
+            all((client_id in range(0, num_clients_optimal), client_id in range(0, num_male_clients_optimal))),
+            all((client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate), client_id in range(num_clients_optimal, num_clients_optimal + num_male_clients_ultimate))),
+            all((client_id in range(num_clients_optimal + num_clients_ultimate, num_clients_optimal + num_clients_ultimate + num_clients_core), client_id in range(num_clients_optimal, num_clients_optimal + num_clients_ultimate + num_male_clients_core))),
+        )):
+            return m.ClientSex.MALE
         return m.ClientSex.FEMALE
     
     def __get_assessment_priority(self, assessment_name: str) -> int:
