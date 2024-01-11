@@ -196,6 +196,7 @@ class Solver:
                 _activities: List[m.Activity]
                 for _activities in activities:
                     activity_rooms = []
+                    other_activity_rooms = []
                     
                     activity: m.Activity
                     for activity in _activities:
@@ -214,11 +215,9 @@ class Solver:
                             if room_count >= self.__num_doctors and room_type == m.ResourceRoomTypes.DOCTOR_ROOM.value:
                                 break
                             
-                            duration = activity.time_allocations.default_time
-                            
+                            duration = activity.time_allocations.default_time                           
                             if activity.is_gender_time_allocated:
                                 duration = getattr(activity.time_allocations, client_scenario.sex.value.lower())
-                            
                             activity_rooms.append(
                                 self.__activity_type(
                                     duration,
@@ -231,11 +230,29 @@ class Solver:
                                 )
                             )
                             
+                            if other_client_scenario is not None:
+                                other_duration = activity.time_allocations.default_time
+                                if activity.is_gender_time_allocated:
+                                    other_duration = getattr(activity.time_allocations, other_client_scenario.sex.value.lower())
+                                other_activity_rooms.append(
+                                    self.__activity_type(
+                                        other_duration,
+                                        activity.activity_id,
+                                        room.resource_id,
+                                        room.location,
+                                        client_id + 1,
+                                        client_info[1],
+                                        client_info[2]
+                                    )
+                                )
+                            
                             self.__num_floors = max(self.__num_floors, room.location)
                             
                             room_count += 1
                             
                     schedule.append(activity_rooms)
+                    if len(other_activity_rooms) > 0:
+                        schedule.append(other_activity_rooms)
 
                 self.__schedules.append(schedule)
                 if len(other_schedule) > 0:
@@ -268,20 +285,20 @@ class Solver:
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
         for client_id, schedule in enumerate(self.__schedules):
-            client_type = self.__get_client_type(client_id)
-            client_marital_type = self.__get_client_marital_type(client_id)
-            client_sex = self.__get_client_sex_by_client_type_and_id(client_id)
+            # client_type = self.__get_client_type(client_id)
+            # client_marital_type = self.__get_client_marital_type(client_id)
+            # client_sex = self.__get_client_sex_by_client_type_and_id(client_id)
             
-            client_scenario = m.ClientScenario(
-                client_id,
-                client_type,
-                client_marital_type,
-                client_sex,
-                client_id if client_marital_type == m.ClientMaritalType.SINGLE else None,
-                client_id if client_marital_type == m.ClientMaritalType.COUPLE else None,
-                start_time=self.scenario_action.first_client_arrival_time
-            )
-            self.__clients_scenarios_map[client_id] = client_scenario
+            # client_scenario = m.ClientScenario(
+            #     client_id,
+            #     client_type,
+            #     client_marital_type,
+            #     client_sex,
+            #     client_id if client_marital_type == m.ClientMaritalType.SINGLE else None,
+            #     client_id if client_marital_type == m.ClientMaritalType.COUPLE else None,
+            #     start_time=self.scenario_action.first_client_arrival_time
+            # )
+            # self.__clients_scenarios_map[client_id] = client_scenario
             
             previous_end = None
             
