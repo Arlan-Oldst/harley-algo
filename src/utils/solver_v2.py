@@ -47,7 +47,7 @@ class Solver:
         self.__counter_male_core = 0
         self.__counter_female_core = 0
 
-        self.__activity_type = collections.namedtuple('task_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
+        self.__activity_type = collections.namedtuple('activity_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
         
         self.model = cp_model.CpModel()
         self.__scenario_action = None
@@ -117,9 +117,9 @@ class Solver:
             num_clients = sum((
                 num_single_male_clients,
                 num_single_female_clients,
-                num_couple_male_male_clients,
-                num_couple_female_female_clients,
-                num_couple_male_female_clients
+                num_couple_male_male_clients * 2,
+                num_couple_female_female_clients * 2,
+                num_couple_male_female_clients * 2
             ))
             num_male_clients = sum((
                 num_single_male_clients,
@@ -226,6 +226,7 @@ class Solver:
                                     room.location,
                                     client_id,
                                     client_info[0],
+                                    client_type,
                                     client_info[2]
                                 )
                             )
@@ -242,6 +243,7 @@ class Solver:
                                         room.location,
                                         client_id + 1,
                                         client_info[1],
+                                        client_type,
                                         client_info[2]
                                     )
                                 )
@@ -252,7 +254,7 @@ class Solver:
                             
                     schedule.append(activity_rooms)
                     if len(other_activity_rooms) > 0:
-                        schedule.append(other_activity_rooms)
+                        other_schedule.append(other_activity_rooms)
 
                 self.__schedules.append(schedule)
                 if len(other_schedule) > 0:
@@ -284,22 +286,7 @@ class Solver:
         
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
-        for client_id, schedule in enumerate(self.__schedules):
-            # client_type = self.__get_client_type(client_id)
-            # client_marital_type = self.__get_client_marital_type(client_id)
-            # client_sex = self.__get_client_sex_by_client_type_and_id(client_id)
-            
-            # client_scenario = m.ClientScenario(
-            #     client_id,
-            #     client_type,
-            #     client_marital_type,
-            #     client_sex,
-            #     client_id if client_marital_type == m.ClientMaritalType.SINGLE else None,
-            #     client_id if client_marital_type == m.ClientMaritalType.COUPLE else None,
-            #     start_time=self.scenario_action.first_client_arrival_time
-            # )
-            # self.__clients_scenarios_map[client_id] = client_scenario
-            
+        for client_id, schedule in enumerate(self.__schedules):           
             previous_end = None
             
             for i, activities in enumerate(schedule):
