@@ -291,7 +291,7 @@ class Solver:
         
         start_activity_id = self.__activities_names_map['Check-in, Consent & Change'.lower()][0].activity_id
         previous_start = None
-        is_couple_with_previous_client = False
+        previous_client_no = None
         for client_id, schedule in enumerate(self.__schedules):
             client: m.ClientScenario = self.__clients_scenarios_map[client_id]
             previous_end = None
@@ -341,9 +341,9 @@ class Solver:
                     if previous_start == None:
                         self.model.Add(start == 0)
                     else:
-                        if is_couple_with_previous_client and client.type == m.ClientMaritalType.COUPLE:
+                        if previous_client_no == client.couple_client_no and client.type == m.ClientMaritalType.COUPLE:
                             self.model.Add(start == previous_start)
-                            is_couple_with_previous_client = False
+                            previous_client_no = None
                         else:
                             self.model.Add(start > previous_start)
 
@@ -391,8 +391,8 @@ class Solver:
                 
             self.ends_per_client.append(previous_end)
     
-            if client.type == m.ClientMaritalType.COUPLE and not is_couple_with_previous_client:
-                is_couple_with_previous_client = True
+            if client.type == m.ClientMaritalType.COUPLE and not previous_client_no:
+                previous_client_no = client.couple_client_no
         
         end_time = datetime.now()
         print(f'Total Time for defining variables: {(end_time - start_time).total_seconds() / 60.0} minutes')
@@ -514,7 +514,7 @@ class Solver:
     def __apply_transfer_constraint(self, *allowed_activities: int):
         """Helper function for applying the transfer constraint of the solver.
         """
-        is_couple_with_previous_client = False
+        previous_client_no = None
         for client_id, schedule in enumerate(self.__schedules):
             client: m.ClientScenario = self.__clients_scenarios_map[client_id]
             arcs = []
@@ -553,9 +553,9 @@ class Solver:
                     self.model.Add(transfer_start == self.ends[(client_id, activity_id)]).OnlyEnforceIf(transfer_floor, consecutive_activities)
                     self.model.Add(transfer_end == self.starts[(client_id, other_activity_id)]).OnlyEnforceIf(transfer_floor, consecutive_activities)
                     
-                    if activity_id in allowed_activities and other_activity_id in allowed_activities and is_couple_with_previous_client and client.type == m.ClientMaritalType.COUPLE:
+                    if activity_id in allowed_activities and other_activity_id in allowed_activities and previous_client_no == client.couple_client_no and client.type == m.ClientMaritalType.COUPLE:
                         self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
-                        is_couple_with_previous_client = False
+                        previous_client_no = None
                     else:
                         self.model.Add(self.starts[(client_id, other_activity_id)] == self.ends[(client_id, activity_id)]).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities)
                     
@@ -586,8 +586,8 @@ class Solver:
                     self.intervals_per_client[client_id].append(transfer_interval)
                     
             self.model.AddCircuit(arcs)
-            if client.type == m.ClientMaritalType.COUPLE and not is_couple_with_previous_client:
-                is_couple_with_previous_client = True
+            if client.type == m.ClientMaritalType.COUPLE and not previous_client_no:
+                previous_client_no = client.couple_client_no
     
     def __apply_maximum_time_constraint(self, generate: bool = True):
         """Helper function for applying the maximum time constraint of the solver.
