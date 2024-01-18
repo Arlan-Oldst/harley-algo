@@ -6,6 +6,7 @@ from datetime import timedelta
 class SolverMode(Enum):
     MAKESPAN = 'MAKESPAN'
     GAPS = 'GAPS'
+    ALL = 'ALL'
 
 class ClientType(Enum):
     OPTIMAL = 'OPTIMAL'

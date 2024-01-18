@@ -54,8 +54,9 @@ class Controller:
                 ) is None
             ]
             assessment.data['activities'] = _activities
-                
+            
         resources = retrieve_resources(authorization)
+        resources = [resource for resource in resources if not resource.resource_id in scenario_action.data.out_of_order_rooms]
         
         solver = Solver()
         solver.scenario_action = scenario_action

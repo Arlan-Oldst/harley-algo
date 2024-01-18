@@ -133,6 +133,10 @@ class Condition(Base):
     data: dict = field(default_factory=dict)
 
 @dataclass
+class ScenarioCondition(Condition):
+    is_fulfilled: bool = False
+
+@dataclass
 class GeneralCondition(Base):
     general_condition_id: str
     general_condition_title: str
@@ -165,7 +169,7 @@ class ClientCount(Record):
 
 @dataclass
 class ScenarioActionData(Record):
-    out_order_rooms: List[str] = field(default_factory=list)
+    out_of_order_rooms: List[str] = field(default_factory=list)
     client_elite: ClientCount = field(default_factory=ClientCount)
     client_ultimate: ClientCount = field(default_factory=ClientCount)
     client_core: ClientCount = field(default_factory=ClientCount)
@@ -197,7 +201,7 @@ class TransferActivity(Record):
 
 @dataclass
 class ClientScenario(Record):
-    client_number: int
+    client_no: int
     client_type: ClientType
     type: ClientMaritalType
     sex: ClientSex

@@ -41,7 +41,10 @@ def serialize_as_dataclass(o: object, **kwargs) -> object:
                     continue
         elif get_origin(field_type) is list:
             _type = field_type.__args__[0]
-            attribute = [serialize_as_dataclass(_type, **a) for a in attribute]
+            if _type in m.MODELS or field_type in sm.MODELS: 
+                attribute = [serialize_as_dataclass(_type, **a) for a in attribute]
+            else:
+                attribute = [_type(a) for a in attribute]
         elif field_type in m.MODELS or field_type in sm.MODELS:
             attribute = serialize_as_dataclass(field_type, **attribute)
         elif field_type is datetime:
