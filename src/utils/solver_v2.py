@@ -92,10 +92,10 @@ class Solver:
         """
         if mode == sm.SolverMode.MAKESPAN.value:
             self.model.Minimize(self.starts_per_client[-1])
-        elif mode == sm.SolverMode.GAPS.value:
-            self.model.Minimize(sum(self.gaps))
-        else:
-            self.model.Minimize(sum(self.gaps) + self.starts_per_client[-1])
+        # elif mode == sm.SolverMode.GAPS.value:
+        #     self.model.Minimize(sum(self.gaps))
+        # else:
+        #     self.model.Minimize(sum(self.gaps) + self.starts_per_client[-1])
     
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
@@ -554,19 +554,19 @@ class Solver:
                     self.model.AddModuloEquality(0, transfer_end, self.__time_max_interval)
                     
                     # For getting the number of gaps
-                    consecutive_orders = self.model.NewBoolVar(f'{other_activity_id} order is after {activity_id} order')
-                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(consecutive_orders)
-                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] > self.__time_max_gap).OnlyEnforceIf(consecutive_orders.Not())
+                    # consecutive_orders = self.model.NewBoolVar(f'{other_activity_id} order is after {activity_id} order')
+                    # self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] <= self.__time_max_gap).OnlyEnforceIf(consecutive_orders)
+                    # self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] > self.__time_max_gap).OnlyEnforceIf(consecutive_orders.Not())
                     
-                    zero_time_difference = self.model.NewBoolVar(f'difference of {other_activity_id} and {activity_id} is equal to zero')
-                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] != 0).OnlyEnforceIf(zero_time_difference)
-                    self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] == 0).OnlyEnforceIf(zero_time_difference.Not())
+                    # zero_time_difference = self.model.NewBoolVar(f'difference of {other_activity_id} and {activity_id} is equal to zero')
+                    # self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] != 0).OnlyEnforceIf(zero_time_difference)
+                    # self.model.Add(self.starts[(client_id, other_activity_id)] - self.ends[(client_id, activity_id)] == 0).OnlyEnforceIf(zero_time_difference.Not())
                     
-                    existing_gap = self.model.NewBoolVar(f'gap between {other_activity_id} and {activity_id} exists')
-                    self.model.Add(existing_gap == 1).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference)
-                    self.model.Add(existing_gap == 0).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference.Not())
+                    # existing_gap = self.model.NewBoolVar(f'gap between {other_activity_id} and {activity_id} exists')
+                    # self.model.Add(existing_gap == 1).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference)
+                    # self.model.Add(existing_gap == 0).OnlyEnforceIf(transfer_floor.Not(), consecutive_activities, consecutive_orders, zero_time_difference.Not())
                     
-                    self.gaps.append(existing_gap)
+                    # self.gaps.append(existing_gap)
                     
                     self.transfer_starts[(client_id, activity_index, other_activity_index)] = transfer_start
                     self.transfer_ends[(client_id, activity_index, other_activity_index)] = transfer_end
@@ -858,7 +858,7 @@ class Solver:
         start = self.solver.Value(self.starts[(client_id, other_activity_id)])
         expression = end <= start
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_before_time_constraint(self, client_id: int, activity_id: int, time_before: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be before a certain time; end time of activity <= time_before.
@@ -880,7 +880,7 @@ class Solver:
         end = self.solver.Value(self.ends[(client_id, activity_id)])
         expression = end <= time_before
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_before_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be before a certain order; end time of activity <= start time of another activity at given order.
@@ -904,7 +904,7 @@ class Solver:
         activity_order = self.solver.Value(self.orders[(client_id, activity_id)])
         expression = activity_order < order
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be after another activity; start time of activity >= end time of another activity.
@@ -924,7 +924,7 @@ class Solver:
         end = self.solver.Value(self.ends[(client_id, other_activity_id)])
         expression = start >= end
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_after_time_constraint(self, client_id, activity_id: int, time_after: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be after a certain time; start time of activity >= time_after.
@@ -945,7 +945,7 @@ class Solver:
         start = self.solver.Value(self.starts[(client_id, activity_id)])
         expression = start >= time_after
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_after_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be after a certain order; start time of activity >= end time of another activity at given order.
@@ -969,7 +969,7 @@ class Solver:
         activity_order = self.solver.Value(self.orders[(client_id, activity_id)])
         expression = activity_order > order
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_right_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be right after another activity; start time of activity >= end time of another activity && start time of activity - end time of another activity <= time_max_gap.
@@ -991,7 +991,7 @@ class Solver:
         end = self.solver.Value(self.ends[(client_id, other_activity_id)])
         expression = start == end
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_between_activities_constraint(self, client_id, activity_id: int, other_activity_id_before: int, other_activity_id_after: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be between two other activities; start time of activity >= end time of another activity before && end time of activity <= start time of another activity after.
@@ -1016,7 +1016,7 @@ class Solver:
         after_start = self.solver.Value(self.starts[(client_id, other_activity_id_after)])
         expression = start >= before_end and end <= after_start
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_between_times_constraint(self, client_id, activity_id: int, time_before: timedelta, time_after: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be between two times; start time of activity >= time_before && end time of activity <= time_after.
@@ -1043,7 +1043,7 @@ class Solver:
         end = self.solver.Value(self.ends[(client_id, activity_id)])
         expression = start >= time_before and end <= time_after
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_between_orders_constraint(self, client_id, activity_id: int, order_before: int, order_after: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be between two orders; start time of activity >= end time of another activity at order_before && end time of activity <= start time of another activity at order_after.
@@ -1072,7 +1072,7 @@ class Solver:
         activity_order = self.solver.Value(self.orders[(client_id, activity_id)])
         expression = activity_order > order_after and activity_order < order_before
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_within_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, time_after: timedelta, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must start within a certain time after another activity; start time of activity >= end time of another activity && start time of activity <= start time of another activity + time_after.
@@ -1097,7 +1097,7 @@ class Solver:
         other_start = self.solver.Value(self.starts[(client_id, other_activity_id)])
         expression = start >= other_end and start <= other_start + time_after
 
-        return expression if generate else not expression
+        return expression == generate
 
     def __apply_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be at a certain order; start time of activity >= end time of other activities at < order && end time of activity <= start time of other activities at > order.
@@ -1122,7 +1122,7 @@ class Solver:
         activity_order = self.solver.Value(self.orders[(client_id, activity_id)])
         expression = activity_order == order
 
-        return expression if generate else not expression
+        return expression == generate
 
     # Room Conditions
     def __apply_maximum_capacity_constraint(self, room_id: int, activity_id, capacity: int, generate: bool = True):
@@ -1398,7 +1398,7 @@ class Solver:
         self.__apply_general_constraints()
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
-        self.__define_objective(sm.SolverMode.ALL.value)
+        self.__define_objective(sm.SolverMode.MAKESPAN.value)
         
         self.solver = cp_model.CpSolver()
         self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
