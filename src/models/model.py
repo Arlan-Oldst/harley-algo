@@ -182,6 +182,8 @@ class ScenarioAction(Record):
     total_female: int | None = None
     doctors_on_duty: int | None = None
     allow_simultaneous_transfers: bool = False
+    is_minimize_gaps: bool = True
+    is_ensure_early_end_time: bool = True
     data: ScenarioActionData = field(default_factory=ScenarioActionData)
 
 @dataclass

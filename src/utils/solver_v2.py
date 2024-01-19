@@ -90,8 +90,9 @@ class Solver:
     def __define_objective(self, mode: sm.SolverMode = sm.SolverMode.GAPS.value):
         """Helper function for defining the objective of the solver
         """
-        if mode == sm.SolverMode.MAKESPAN.value:
-            self.model.Minimize(self.starts_per_client[-1])
+        self.model.Minimize(self.starts_per_client[-1])
+        # if mode == sm.SolverMode.MAKESPAN.value:
+        #     self.model.Minimize(self.starts_per_client[-1])
         # elif mode == sm.SolverMode.GAPS.value:
         #     self.model.Minimize(sum(self.gaps))
         # else:
@@ -1389,6 +1390,19 @@ class Solver:
             for room_condition in _room_conditions
         ]
     
+    def __set_objective(self) -> str:
+        """Helper function for setting the objective of the solver
+        """
+        match (self.scenario_action.is_minimize_gaps, self.scenario_action.is_ensure_early_end_time):
+            case (True, True):
+                return sm.SolverMode.ALL.value
+            case (True, False):
+                return sm.SolverMode.GAPS.value
+            case (False, True):
+                return sm.SolverMode.MAKESPAN.value
+            case _:
+                return sm.SolverMode.ALL.value
+
     # Main scenario generating function
     def generate(self):
         assert self.__assessments is not None, 'Invalid assessments'
@@ -1398,7 +1412,8 @@ class Solver:
         self.__apply_general_constraints()
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
-        self.__define_objective(sm.SolverMode.MAKESPAN.value)
+        objective_mode = self.__set_objective()
+        self.__define_objective(objective_mode)
         
         self.solver = cp_model.CpSolver()
         self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
