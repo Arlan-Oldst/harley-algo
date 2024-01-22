@@ -39,13 +39,6 @@ class Solver:
         self.__simultaneous_transfers = None
         
         self.__horizon = None
-        
-        self.__counter_male_optimal = 0
-        self.__counter_female_optimal = 0
-        self.__counter_male_ultimate = 0
-        self.__counter_female_ultimate = 0
-        self.__counter_male_core = 0
-        self.__counter_female_core = 0
 
         self.__activity_type = collections.namedtuple('activity_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
         
@@ -91,11 +84,11 @@ class Solver:
         """Helper function for defining the objective of the solver
         """
         if mode == sm.SolverMode.MAKESPAN.value:
-            self.model.Minimize(self.starts_per_client[-1])
+            self.model.Minimize(sum(self.starts_per_client))
         elif mode == sm.SolverMode.GAPS.value:
             self.model.Minimize(sum(self.gaps))
         elif mode == sm.SolverMode.ALL.value:
-            self.model.Minimize(sum(self.gaps) + self.starts_per_client[-1])
+            self.model.Minimize(sum(self.gaps) + sum(self.starts_per_client))
     
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
@@ -1413,10 +1406,11 @@ class Solver:
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
         objective_mode = self.__set_objective()
+        print(objective_mode)
         self.__define_objective(objective_mode)
         
         self.solver = cp_model.CpSolver()
-        self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
+        # self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
         
         start_time = datetime.now()
         self.status = self.solver.Solve(self.model)
