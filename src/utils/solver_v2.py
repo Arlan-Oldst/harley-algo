@@ -723,17 +723,17 @@ class Solver:
             case 'BEFORE_ACTIVITY':
                 condition_value = self.__check_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
             case 'BEFORE_TIME':
-                condition_value = self.__check_before_time_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
+                condition_value = self.__check_before_time_constraint(client_id, condition_activity_id, condition_criteria_value,condition_criteria_value, condition_generate)
             case 'BEFORE_ORDER':
-                condition_value = self.__check_before_order_constraint(client_id, condition_activity_id, condition_generate)
+                condition_value = self.__check_before_order_constraint(client_id, condition_activity_id,condition_criteria_value, condition_generate)
             case 'AFTER_ACTIVITY':
-                condition_value = self.__check_after_activity_condition(client_id, condition_activity_id, condition_generate)
+                condition_value = self.__check_after_activity_condition(client_id, condition_activity_id,condition_criteria_value, condition_generate)
             case 'AFTER_TIME':
-                condition_value = self.__check_after_time_constraint(client_id, condition_activity_id, condition_generate)
+                condition_value = self.__check_after_time_constraint(client_id, condition_activity_id,condition_criteria_value, condition_generate)
             case 'AFTER_ORDER':
-                condition_value = self.__check_after_order_constraint(client_id, condition_activity_id, condition_generate)
+                condition_value = self.__check_after_order_constraint(client_id, condition_activity_id,condition_criteria_value, condition_generate)
             case 'RIGHT_AFTER_ACTIVITY':
-                condition_value = self.__check_right_after_activity_constraint(client_id, condition_activity_id, condition_generate)
+                condition_value = self.__check_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
             case 'BETWEEN_ACTIVITY':
                 condition_value = self.__check_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end, condition_generate)
             case 'BETWEEN_TIME':
