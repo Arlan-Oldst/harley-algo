@@ -1401,7 +1401,7 @@ class Solver:
             case (False, True):
                 return sm.SolverMode.MAKESPAN.value
             case _:
-                return sm.SolverMode.ALL.value
+                return None
 
     # Main scenario generating function
     def generate(self):
