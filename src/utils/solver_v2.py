@@ -9,6 +9,7 @@ import re
 import uuid
 import random
 import itertools
+import sys
 
 class Solver:
     """A class for solving the scheduling problem of the assessments.
@@ -86,9 +87,11 @@ class Solver:
         if mode == sm.SolverMode.MAKESPAN.value:
             self.model.Minimize(sum(self.starts_per_client))
         elif mode == sm.SolverMode.GAPS.value:
-            self.model.Minimize(sum(self.gaps))
+            # self.model.Minimize(sum(self.gaps))
+            pass
         elif mode == sm.SolverMode.ALL.value:
-            self.model.Minimize(sum(self.gaps) + sum(self.starts_per_client))
+            # self.model.Minimize(sum(self.gaps) + sum(self.starts_per_client))
+            self.model.Minimize(sum(self.starts_per_client))
     
     def __initialize_variables(self):
         """Helper function for initializing the variables of the solver. It must be ran prior to the definition of the variables.
@@ -779,6 +782,7 @@ class Solver:
                     continue
 
                 condition_type = condition.type
+                condition_generate = condition.generate
                 condition_activity_id = condition.activity_id
                 condition_activity_id = self.__activities_uids_map.get(str(condition_activity_id), None)
                 
@@ -798,30 +802,30 @@ class Solver:
 
                     match condition_key:
                         case 'BEFORE_ACTIVITY':
-                            self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_before_activity_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'BEFORE_TIME':
-                            self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_before_time_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'BEFORE_ORDER':
-                            self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_before_order_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'AFTER_ACTIVITY':
-                            self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'AFTER_TIME':
-                            self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_after_time_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'AFTER_ORDER':
-                            self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_after_order_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'RIGHT_AFTER_ACTIVITY':
-                            self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_right_after_activity_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case 'BETWEEN_ACTIVITY':
-                            self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                            self.__apply_between_activities_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end, condition_generate)
                         case 'BETWEEN_TIME':
-                            self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                            self.__apply_between_times_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end, condition_generate)
                         case 'BETWEEN_ORDER':
-                            self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end)
+                            self.__apply_between_orders_constraint(client_id, condition_activity_id, condition_criteria_between_values_start, condition_criteria_between_values_end, condition_generate)
                         case 'WITHIN_AFTER_ACTIVITY':
                             other_activity_id = start_activity_id
-                            self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value)
+                            self.__apply_within_after_activity_constraint(client_id, condition_activity_id, other_activity_id, condition_criteria_value, condition_generate)
                         case 'IN_FIXED_ORDER_AS_ORDER':
-                            self.__apply_order_constraint(client_id, condition_activity_id, condition_criteria_value)
+                            self.__apply_order_constraint(client_id, condition_activity_id, condition_criteria_value, condition_generate)
                         case _:
                             raise ValueError('Invalid condition type')
 
@@ -841,10 +845,10 @@ class Solver:
             generate (bool): whether to generate or avoid generating the constraint
         """
         if not generate:
-            return
+            self.__apply_after_activity_constraint(client_id, activity_id, other_activity_id, generate)
+        else:
+            self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id)])
         
-        self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id)])
-    
     def __check_before_activity_constraint(self, client_id: int, activity_id: int, other_activity_id: int, generate: bool = True):
         """Checks whether the before activity condition is fulfilled for client with given client_id and activity with given activity_id.
         """
@@ -863,7 +867,9 @@ class Solver:
             time_before (int): the maximum time limit for the end of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
+        if not generate:
+            self.__apply_after_time_constraint(client_id, activity_id, time_before, generate)
+        else:
             time_before = int((time_before - self.__time_start).total_seconds() // 60)
             self.model.Add(self.ends[(client_id, activity_id)] <= time_before)           
     
@@ -876,7 +882,7 @@ class Solver:
 
         return expression == generate
 
-    def __apply_before_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
+    def __apply_before_order_constraint(self, client_id, activity_id: int, _order: int, generate: bool = True):
         """[Activity Condition] Applies the condition that an activity must be before a certain order; end time of activity <= start time of another activity at given order.
 
         Args:
@@ -884,13 +890,13 @@ class Solver:
             order (int): the order of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
+        if _order < 0:
+            _order += len(self.__schedules[client_id])
+
         if not generate:
-            return
-        
-        if order < 0:
-            order += len(self.__schedules[client_id])
-        
-        self.model.Add(self.orders[(client_id, activity_id)] < order)
+            self.model.Add(self.orders[(client_id, activity_id)] >= _order)
+        else:
+            self.model.Add(self.orders[(client_id, activity_id)] < _order)
     
     def __check_before_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """Checks whether the before order condition is fulfilled for client with given client_id and activity with given activity_id.
@@ -908,7 +914,9 @@ class Solver:
             other_activity_id (int): the id of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
+        if not generate:
+            self.__apply_before_activity_constraint(client_id, activity_id, other_activity_id, generate)
+        else:
             self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id)])
     
     def __check_after_activity_condition(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
@@ -928,7 +936,9 @@ class Solver:
             time_after (int): the minimum time limit for the start of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
+        if not generate:
+            self.__apply_before_time_constraint(client_id, activity_id, time_after, generate)
+        else:
             time_after = int((time_after - self.__time_start).total_seconds() // 60)
             self.model.Add(self.starts[(client_id, activity_id)] >= time_after)
     
@@ -949,13 +959,13 @@ class Solver:
             order (int): the order of the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if not generate:
-            return
-        
         if order < 0:
             order += len(self.__schedules[client_id])
-        
-        self.model.Add(self.orders[(client_id, activity_id)] > order)
+
+        if not generate:
+            self.model.Add(self.orders[(client_id, activity_id)] <= order)
+        else:
+            self.model.Add(self.orders[(client_id, activity_id)] > order)
     
     def __check_after_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """Checks whether the after order condition is fulfilled for client with given client_id and activity with given activity_id.
@@ -975,7 +985,9 @@ class Solver:
             time_max_gap (int): the maximum time gap between the two activities
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
+        if not generate:
+            self.model.Add(self.starts[(client_id, activity_id)] != self.ends[(client_id, other_activity_id)])
+        else:
             self.model.Add(self.starts[(client_id, activity_id)] == self.ends[(client_id, other_activity_id)])
     
     def __check_right_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, generate: bool = True):
@@ -996,7 +1008,17 @@ class Solver:
             other_activity_id_after (int): the id of the other activity after
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
+        if not generate:
+            before_literal = self.model.NewBoolVar(f'before_literal')
+            self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id_before)]).OnlyEnforceIf(before_literal)
+            self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id_before)]).OnlyEnforceIf(before_literal.Not())
+
+            after_literal = self.model.NewBoolVar(f'after_literal')
+            self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id_after)]).OnlyEnforceIf(after_literal)
+            self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id_after)]).OnlyEnforceIf(after_literal.Not())
+
+            self.model.AddBoolOr([before_literal, after_literal])
+        else:
             self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id_before)])
 
             self.model.Add(self.ends[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id_after)])
@@ -1021,11 +1043,20 @@ class Solver:
             time_after (int): the maximum time limit for the end of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            time_before = int((time_before - self.__time_start).total_seconds() // 60)
-            time_after = int((time_after - self.__time_start).total_seconds() // 60)
+        time_before = int((time_before - self.__time_start).total_seconds() // 60)
+        time_after = int((time_after - self.__time_start).total_seconds() // 60)
+        if not generate:
+            before_literal = self.model.NewBoolVar(f'before_literal')
+            self.model.Add(self.ends[(client_id, activity_id)] <= time_before).OnlyEnforceIf(before_literal)
+            self.model.Add(self.ends[(client_id, activity_id)] > time_before).OnlyEnforceIf(before_literal.Not())
+
+            after_literal = self.model.NewBoolVar(f'after_literal')
+            self.model.Add(self.starts[(client_id, activity_id)] >= time_after).OnlyEnforceIf(after_literal)
+            self.model.Add(self.starts[(client_id, activity_id)] < time_after).OnlyEnforceIf(after_literal.Not())
+
+            self.model.AddBoolOr([before_literal, after_literal])
+        else:
             self.model.Add(self.starts[(client_id, activity_id)] >= time_before)
-                
             self.model.Add(self.ends[(client_id, activity_id)] <= time_after)
     
     def __check_between_times_constraint(self, client_id, activity_id: int, time_before: timedelta, time_after: timedelta, generate: bool = True):
@@ -1048,17 +1079,25 @@ class Solver:
             order_after (int): the order of the other activity after
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if not generate:
-            return
-        
         if order_after < 0:
             order_after += len(self.__schedules[client_id])
             
         if order_before < 0:
             order_before += len(self.__schedules[client_id])
-        
-        self.model.Add(self.orders[(client_id, activity_id)] > order_after)
-        self.model.Add(self.orders[(client_id, activity_id)] < order_before)
+
+        if not generate:
+            before_literal = self.model.NewBoolVar(f'before_literal')
+            self.model.Add(self.orders[(client_id, activity_id)] < order_before).OnlyEnforceIf(before_literal)
+            self.model.Add(self.ends[(client_id, activity_id)] >= order_before).OnlyEnforceIf(before_literal.Not())
+            
+            after_literal = self.model.NewBoolVar(f'after_literal')
+            self.model.Add(self.starts[(client_id, activity_id)] > order_after).OnlyEnforceIf(after_literal)
+            self.model.Add(self.orders[(client_id, activity_id)] <= order_after).OnlyEnforceIf(after_literal.Not())
+
+            self.model.AddBoolOr([before_literal, after_literal])
+        else:
+            self.model.Add(self.orders[(client_id, activity_id)] > order_after)
+            self.model.Add(self.orders[(client_id, activity_id)] < order_before)
     
     def __check_between_orders_constraint(self, client_id, activity_id: int, order_before: int, order_after: int, generate: bool = True):
         """Checks whether the between orders condition is fulfilled for client with given client_id, and activity with given activity_id.
@@ -1077,9 +1116,11 @@ class Solver:
             time_after (int): the time limit after the other activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if generate:
-            time_after = int(time_after.total_seconds() // 60)
-            self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id)])
+        time_after = int(time_after.total_seconds() // 60)
+        self.model.Add(self.starts[(client_id, activity_id)] >= self.ends[(client_id, other_activity_id)])
+        if not generate:
+            self.model.Add(self.starts[(client_id, activity_id)] > self.starts[(client_id, other_activity_id)] + time_after)
+        else:
             self.model.Add(self.starts[(client_id, activity_id)] <= self.starts[(client_id, other_activity_id)] + time_after)
     
     def __check_within_after_activity_constraint(self, client_id, activity_id: int, other_activity_id: int, time_after: timedelta, generate: bool = True):
@@ -1102,13 +1143,13 @@ class Solver:
             order (int): the order of the activity
             generate (bool): whether to generate or avoid generating the constraint
         """
-        if not generate:
-            return
-        
         if order < 0:
             order += len(self.__schedules[client_id])
-        
-        self.model.Add(self.orders[(client_id, activity_id)] == order)
+
+        if not generate:
+            self.model.Add(self.orders[(client_id, activity_id)] != order)
+        else:
+            self.model.Add(self.orders[(client_id, activity_id)] == order)
     
     def __check_order_constraint(self, client_id, activity_id: int, order: int, generate: bool = True):
         """Checks whether the order condition is fulfilled for client with given client_id, and activity with given activity_id.
@@ -1406,21 +1447,24 @@ class Solver:
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
         objective_mode = self.__set_objective()
-        print(objective_mode)
+        print(f'Objective Function Mode: {objective_mode}', file=sys.stdout)
         self.__define_objective(objective_mode)
         
         self.solver = cp_model.CpSolver()
-        # self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 3))).total_seconds()
+        self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 5))).total_seconds()
+        # self.solver.parameters.log_search_progress = True
         
         start_time = datetime.now()
         self.status = self.solver.Solve(self.model)
         end_time = datetime.now()
         
-        print(self.solver.StatusName(self.status))
-        print(f'Total Time for solver: {(end_time - start_time).total_seconds() / 60.0} minutes')
+        print(f'Solver Status: {self.solver.StatusName(self.status)}', file=sys.stdout)
+        print(f'Total Time for solver: {(end_time - start_time).total_seconds() / 60.0} minutes', file=sys.stdout)
         
-        if self.status != cp_model.OPTIMAL and self.status != cp_model.FEASIBLE:
-            raise ValueError('Cannot generate schedule')
+        if self.status == 'INFEASIBLE':
+            raise ValueError('Cannot generate schedule.')
+        elif self.status == 'UNKNOWN':
+            raise ValueError('Solver timed out.')
         
         self.generated_scenarios = []
         
