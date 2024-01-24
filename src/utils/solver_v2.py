@@ -3,6 +3,7 @@ from ortools.sat.python.cp_model import IntVar
 from typing import List, Dict, Tuple, Any
 from src.models import solver_model as sm, model as m
 from datetime import timedelta, datetime
+from flask import Flask
 import collections
 import os
 import re
@@ -19,7 +20,7 @@ class Solver:
     - All assessments have the same activities
     - All assessments have the same room conditions
     """    
-    def __init__(self) -> None:
+    def __init__(self, app: Flask) -> None:
         """Initializer for the solver
 
         Args:
@@ -43,6 +44,7 @@ class Solver:
 
         self.__activity_type = collections.namedtuple('activity_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
         
+        self.app = app
         self.model = cp_model.CpModel()
         self.__scenario_action = None
         self.__resources = None
@@ -382,7 +384,7 @@ class Solver:
                 previous_couple_no = client.couple_client_no
         
         end_time = datetime.now()
-        print(f'Total Time for defining variables: {(end_time - start_time).total_seconds() / 60.0} minutes')
+        self.app.logger.info(f'Total Time for defining variables: {(end_time - start_time).total_seconds() / 60.0} minutes')
     
     def __apply_general_constraints(self):
         """Helper function for applying all general constraints of the solver namely:
@@ -452,7 +454,7 @@ class Solver:
             self.__apply_gap_between_activity_constraint(mri_elite_id, mri_ultimate_id)
         
         end_time = datetime.now()
-        print(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
+        self.app.logger.info(f'Total Time for applying general constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
     
     def __apply_no_overlap_activity_constraint(self, activity_id: int):
         """Helper function for applying the no overlap constraint at the activity level of the solver.
@@ -832,7 +834,7 @@ class Solver:
             previous_num_clients += assessment.data['num_clients']
                 
         end_time = datetime.now()
-        print(f'Total Time for applying activity constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
+        self.app.logger.info(f'Total Time for applying activity constraints: {(end_time - start_time).total_seconds() / 60.0} minutes')
 
     # Activity Conditions
     def __apply_before_activity_constraint(self, client_id: int, activity_id: int, other_activity_id: int, generate: bool = True):
@@ -1447,7 +1449,7 @@ class Solver:
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
         objective_mode = self.__set_objective()
-        print(f'Objective Function Mode: {objective_mode}', file=sys.stdout)
+        self.app.logger.info(f'Objective Function Mode: {objective_mode}')
         self.__define_objective(objective_mode)
         
         self.solver = cp_model.CpSolver()
@@ -1458,8 +1460,8 @@ class Solver:
         self.status = self.solver.Solve(self.model)
         end_time = datetime.now()
         
-        print(f'Solver Status: {self.solver.StatusName(self.status)}', file=sys.stdout)
-        print(f'Total Time for solver: {(end_time - start_time).total_seconds() / 60.0} minutes', file=sys.stdout)
+        self.app.logger.info(f'Solver Status: {self.solver.StatusName(self.status)}')
+        self.app.logger.info(f'Total Time for solver: {(end_time - start_time).total_seconds() / 60.0} minutes')
         
         if self.status == 'INFEASIBLE':
             raise ValueError('Cannot generate schedule.')

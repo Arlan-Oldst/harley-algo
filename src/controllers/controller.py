@@ -10,13 +10,14 @@ from src.utils.db import retrieve_assessments, retrieve_activity_conditions_by_a
 from src.models.model import ScenarioAction
 from src.utils.solver_v2 import Solver
 from src.utils.serializer import serialize_as_dataclass
+from flask import Flask
 import collections
 import json
 import re
 
 class Controller:
     @staticmethod
-    def retrieve_generated_scenario(authorization, **kwargs) -> dict:
+    def retrieve_generated_scenario(app: Flask, authorization, **kwargs) -> dict:
         """Retrieve the generated scenario by the scheduler module."""
         scenario_action = serialize_as_dataclass(ScenarioAction, **kwargs)
         
@@ -58,7 +59,7 @@ class Controller:
         resources = retrieve_resources(authorization)
         resources = [resource for resource in resources if not resource.resource_id in scenario_action.data.out_of_order_rooms]
         
-        solver = Solver()
+        solver = Solver(app)
         solver.scenario_action = scenario_action
         solver.resources = resources
         solver.assessments = assessments

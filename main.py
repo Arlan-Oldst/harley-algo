@@ -25,7 +25,7 @@ def get_schedule():
             raise Exception('Authorization header is missing.')
         
         event = request.get_json()
-        return Controller.retrieve_generated_scenario(authorization, **event), 200
+        return Controller.retrieve_generated_scenario(app, authorization, **event), 200
     except Exception:
         error = traceback.format_exc()
         print(error)
