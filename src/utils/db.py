@@ -12,7 +12,7 @@ from typing import List
 def retrieve_assessments(authorization) -> List[Assessment]:
     """Retrieve all assessments from the database.
     """
-    url = os.environ.get('NX_API_URL_ASSESSMENT')
+    url = os.environ.get('NX_API_URL_ASSESSMENT', 'https://26hcag1zwc.execute-api.eu-west-2.amazonaws.com/dev/assessment/api/assessment')
     endpoint = 'get-all'
     response = requests.get(f'{url}/{endpoint}', headers={'Authorization': authorization})
     
@@ -27,7 +27,7 @@ def retrieve_assessments(authorization) -> List[Assessment]:
 def retrieve_resources(authorization) -> List[Resource]:
     """Retrieve all resources from the database.
     """
-    url = os.environ.get('NX_API_URL_RESOURCE')
+    url = os.environ.get('NX_API_URL_RESOURCE', 'https://3s0j75sb7l.execute-api.eu-west-2.amazonaws.com/dev/resource/api/resource')
     endpoint = 'get-all'
     response = requests.get(f'{url}/{endpoint}', headers={'Authorization': authorization})
     
@@ -42,7 +42,7 @@ def retrieve_resources(authorization) -> List[Resource]:
 def retrieve_activity_conditions_by_assessment_id(authorization, assessment_id) -> List[Condition]:
     """Retrieve activity conditions by assessment from the database.
     """
-    url = os.environ.get('NX_API_URL_ACTIVITY')
+    url = os.environ.get('NX_API_URL_ACTIVITY', 'https://fi0rey2ut2.execute-api.eu-west-2.amazonaws.com/dev/activity/api')
     endpoint = f'condition/get-all/{assessment_id}'
     response = requests.get(f'{url}/{endpoint}', headers={'Authorization': authorization})
     
@@ -57,7 +57,7 @@ def retrieve_activity_conditions_by_assessment_id(authorization, assessment_id) 
 def retrieve_general_conditions(authorization) -> List[GeneralCondition]:
     """Retrieve all general conditions from the database.
     """
-    url = os.environ.get('NX_API_URL_ACTIVITY')
+    url = os.environ.get('NX_API_URL_ACTIVITY', 'https://fi0rey2ut2.execute-api.eu-west-2.amazonaws.com/dev/activity/api')
     endpoint = 'general-conditions/get-all'
     response = requests.get(f'{url}/{endpoint}', headers={'Authorization': authorization})
     
@@ -69,7 +69,7 @@ def retrieve_general_conditions(authorization) -> List[GeneralCondition]:
 def retrieve_activities(authorization: str) -> List[Activity]:
     """Retrieve all activities from the database.
     """
-    url = os.environ.get('NX_API_URL_ACTIVITY')
+    url = os.environ.get('NX_API_URL_ACTIVITY', 'https://fi0rey2ut2.execute-api.eu-west-2.amazonaws.com/dev/activity/api')
     endpoint = 'activity/get-all'
     response = requests.get(f'{url}/{endpoint}', headers={'Authorization': authorization})
     
