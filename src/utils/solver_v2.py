@@ -1,9 +1,9 @@
 from ortools.sat.python import cp_model
-from ortools.sat.python.cp_model import IntVar
 from typing import List, Dict, Tuple, Any
 from src.models import solver_model as sm, model as m
 from datetime import timedelta, datetime
 from flask import Flask
+from src.utils.hints import HINTS, format_hints_key
 import collections
 import os
 import re
@@ -42,7 +42,7 @@ class Solver:
         
         self.__horizon = None
 
-        self.__activity_type = collections.namedtuple('activity_type', 'duration id room_id room_floor client_id client_sex client_type client_marital_type')
+        self.__activity_type = collections.namedtuple('activity_type', 'duration id name room_id room_floor client_id client_sex client_type client_marital_type')
         
         self.app = app
         self.model = cp_model.CpModel()
@@ -223,6 +223,7 @@ class Solver:
                                 self.__activity_type(
                                     duration,
                                     activity.activity_id,
+                                    activity.activity_name,
                                     room.resource_id,
                                     room.location,
                                     client_id,
@@ -240,6 +241,7 @@ class Solver:
                                     self.__activity_type(
                                         other_duration,
                                         activity.activity_id,
+                                        activity.activity_name,
                                         room.resource_id,
                                         room.location,
                                         client_id + 1,
@@ -315,7 +317,14 @@ class Solver:
                     max_duration = max(max_duration, activity_room.duration)
                 
                 suffix = f'_c{client_id}_a{activity_uid}'
-                start = self.model.NewIntVar(0, self.__horizon, f'start{suffix}')
+                # domain = self.__domain
+                if activity.name == 'Check-in, Consent & Change':
+                    bounds = list(range(0, 215, self.__time_max_interval))
+                    domain = cp_model.Domain.FromValues(bounds)
+                    start = self.model.NewIntVarFromDomain(domain, f'start{suffix}')
+                else:
+                    start = self.model.NewIntVar(0, self.__horizon, f'start{suffix}')
+                    
                 duration = self.model.NewIntVar(min_duration, max_duration, f'duration{suffix}')
                 end = self.model.NewIntVar(0, self.__horizon, f'end{suffix}')
                 interval = self.model.NewIntervalVar(start, duration, end, f'interval{suffix}')
@@ -348,7 +357,12 @@ class Solver:
                     current_activity_rooms = []
                     for activity_room in activities:
                         other_suffix = f'_c{client_id}_a{activity_uid}_r{activity_room.room_id}'
-                        current_start = self.model.NewIntVar(0, self.__horizon, f'start{other_suffix}')
+                        if activity.name == 'Check-in, Consent & Change':
+                            bounds = list(range(0, 215, self.__time_max_interval))
+                            domain = cp_model.Domain.FromValues(bounds)
+                            current_start = self.model.NewIntVarFromDomain(domain, f'start{suffix}')
+                        else:
+                            current_start = self.model.NewIntVar(0, self.__horizon, f'start{suffix}') 
                         current_duration = activity_room.duration
                         current_end = self.model.NewIntVar(0, self.__horizon, f'end{other_suffix}')
                         current_room = self.model.NewBoolVar(f'room{other_suffix}')
@@ -520,7 +534,7 @@ class Solver:
                 for other_activity_index, other_activities in enumerate(schedule):
                     if activity_index == other_activity_index:
                         continue
-                        
+                    
                     other_activity_id = self.__activities_uids_map[other_activities[0].id]
                     
                     consecutive_activities = self.model.NewBoolVar(f'{other_activity_id} is after {activity_id}')
@@ -768,6 +782,9 @@ class Solver:
             if not assessment.enabled:
                 continue
             
+            if assessment.data['num_clients'] <= 0:
+                continue
+
             condition: m.Condition
             for condition in assessment.data['activity_conditions']:
                 if condition.deleted:
@@ -1262,6 +1279,8 @@ class Solver:
         self.__horizon = int((self.__time_end - self.__time_start).total_seconds() // 60)
         
         self.__num_doctors = self.__scenario_action.doctors_on_duty
+
+        self.__domain = cp_model.Domain.FromValues(list(range(0, self.__horizon, self.__time_max_interval)))
     
     @property
     def resources(self) -> List[m.Resource]:
@@ -1305,32 +1324,7 @@ class Solver:
         """
         assert len(_activities), 'Invalid activities'
         
-        if not isinstance(_activities[0], m.Activity):
-            _time_allocations = [
-                activity.pop('time_allocations')
-                for activity in _activities
-            ]
-            self.__activities = [
-                m.Activity(
-                    **activity,
-                    time_allocations=m.TimeAllocation(
-                        **time_allocations
-                    )
-                )
-                for activity, time_allocations in zip(_activities, _time_allocations)
-            ]
-            
-            self.__activities_names_map = collections.defaultdict(list)
-            for activity in self.__activities:
-                for time_allocation in activity.time_allocations.__dict__:
-                    self.__activities_names_map[(activity.activity_id, time_allocation)].append({
-                        'id': activity.activity_id,
-                        'room_type': activity.room_type,
-                        'resource_type': activity.resource_type,
-                        'duration': getattr(activity.time_allocations, time_allocation)
-                    })
-        else:
-            self.__activities = _activities
+        self.__activities = _activities
     
     @property
     def activities_names_map(self) -> List[m.Activity]:
@@ -1439,12 +1433,28 @@ class Solver:
             case _:
                 return None
 
+    def __apply_decision_strategies(self):
+        self.model.AddDecisionStrategy(self.starts_per_client, cp_model.CHOOSE_LOWEST_MIN, cp_model.SELECT_MIN_VALUE)
+
+    def __get_hints(self):
+        optimal_assessment = self.assessments['OPTIMAL']
+        ultimate_assessment = self.assessments['ULTIMATE']
+        core_assessment = self.assessments['CORE']
+        
+        self.hints = HINTS.get((
+            *format_hints_key(optimal_assessment),
+            *format_hints_key(ultimate_assessment),
+            *format_hints_key(core_assessment),
+        ), dict())
+
     # Main scenario generating function
     def generate(self):
         assert self.__assessments is not None, 'Invalid assessments'
         
         self.__initialize_variables()
+        # self.__get_hints()
         self.__define_variables()
+        # self.__apply_decision_strategies()
         self.__apply_general_constraints()
         self.__apply_activity_constraints()
         # self.__apply_room_constraints()
@@ -1461,11 +1471,12 @@ class Solver:
         end_time = datetime.now()
         
         self.app.logger.info(f'Solver Status: {self.solver.StatusName(self.status)}')
+        self.app.logger.info(f'Solver Branches: {self.solver.NumBranches()}')
         self.app.logger.info(f'Total Time for solver: {(end_time - start_time).total_seconds() / 60.0} minutes')
         
-        if self.status == 'INFEASIBLE':
+        if self.status == 3:
             raise ValueError('Cannot generate schedule.')
-        elif self.status == 'UNKNOWN':
+        elif self.status == 0:
             raise ValueError('Solver timed out.')
         
         self.generated_scenarios = []
