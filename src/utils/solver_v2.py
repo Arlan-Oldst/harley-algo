@@ -1463,7 +1463,7 @@ class Solver:
         self.__define_objective(objective_mode)
         
         self.solver = cp_model.CpSolver()
-        self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 5))).total_seconds()
+        self.solver.parameters.max_time_in_seconds = timedelta(minutes=int(os.getenv('SOLVER_MAX_TIME_MINUTES', 25))).total_seconds()
         # self.solver.parameters.log_search_progress = True
         
         start_time = datetime.now()
